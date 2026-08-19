@@ -1,23 +1,14 @@
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: dind-build-ns
-  labels:
-    app: dind-build
----
-# DinD pod — Docker-in-Docker à l'intérieur de K8s
-apiVersion: v1
 kind: Pod
 metadata:
   name: dind-build
-  namespace: dind-build-ns
   labels:
     app: dind-build
 spec:
   containers:
   - name: docker
     image: docker:24-dind
-    command: ["sleep", "3600"]
+    command: ["sh", "-c", "dockerd --insecure-registry registry:5000 &>/var/log/dockerd.log & sleep 3600"]
     securityContext:
       privileged: true
     volumeMounts:
@@ -27,9 +18,3 @@ spec:
   - name: docker-storage
     emptyDir:
       sizeLimit: 5Gi
----
-# kubectl exec helpers:
-#   1. dockerd: kubectl -n dind-build-ns exec dind-build -- sh -c 'dockerd &>/var/log/dockerd.log &'
-#   2. build  : kubectl -n dind-build-ns exec dind-build -- docker build -t myimage:tag .
-#   3. push   : kubectl -n dind-build-ns exec dind-build -- docker push myimage:tag
-#   4. clean  : kubectl -n dind-build-ns exec dind-build -- docker system prune -f
