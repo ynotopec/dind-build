@@ -1,28 +1,26 @@
+#!/home/ai-agent/.hermes/hermes-agent/venv/bin/python3
 """
-DinD Build Factory MCP Server — expose Docker build via K8s DinD pod.
+DinD Build Factory MCP Server — dual transport.
 
-Tools available:
-  dind_build          Build a Docker image in the DinD pod
-  dind_push           Push image to the local K8s registry (registry:5000)
-  dind_pull           Pull image from the local K8s registry
-  dind_run            Run a container from the local registry
-  dind_list_images    List images in the DinD pod
-  dind_list_registry  List images in the K8s registry
-  dind_cleanup        Prune unused images in the DinD pod
+  Stdio   → for Hermes Agent (python3 dind-mcp-server.py)
+  HTTP    → for Open WebUI (python3 dind-mcp-server.py --http [--port 8080])
 
-Usage (stdio):
-  python dind-mcp-server.py  ← reads JSON-RPC from stdin, writes to stdout
+Open WebUI configuration:
+  Admin Settings → Integrations → + Add Server → Type: MCP (Streamable HTTP)
+  Server URL: http://<server>:<port>/mcp
+
+K8s config:
+  export KUBE_NAMESPACE=demo1   # default: demo1
 """
 
+import argparse
 import asyncio
 import subprocess
-import json
-import os
 import sys
+import os
 
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
-from mcp.server.stdio import stdio_server
 from mcp.types import (
     Tool,
     TextContent,
@@ -31,12 +29,14 @@ from mcp.types import (
     CallToolResult,
 )
 
-NS = os.environ.get("DIND_NAMESPACE", "demo1")
+# ── K8s config ──────────────────────────────────────────────────────────────
+
+NS = os.environ.get("KUBE_NAMESPACE", os.environ.get("DIND_NAMESPACE", "demo1"))
 POD = "dind-build"
 REGISTRY = "registry:5000"
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
 def run_kubectl(args: list[str]) -> str:
     cmd = ["kubectl", "-n", NS] + args
@@ -61,7 +61,7 @@ def ensure_dockerd():
         time.sleep(2)
 
 
-# ── tool definitions ─────────────────────────────────────────────────────────
+# ── Tool definitions ────────────────────────────────────────────────────────
 
 TOOLS = [
     Tool(
@@ -70,14 +70,8 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "image_name": {
-                    "type": "string",
-                    "description": "Full image name (e.g. myapp:latest)",
-                },
-                "dockerfile_content": {
-                    "type": "string",
-                    "description": "Content of the Dockerfile to build",
-                },
+                "image_name": {"type": "string", "description": "Full image name (e.g. myapp:latest)"},
+                "dockerfile_content": {"type": "string", "description": "Content of the Dockerfile to build"},
             },
             "required": ["image_name"],
         },
@@ -88,14 +82,8 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "image_name": {
-                    "type": "string",
-                    "description": "Image name to push (e.g. myapp:latest)",
-                },
-                "registry_url": {
-                    "type": "string",
-                    "description": "Registry URL (default: registry:5000)",
-                },
+                "image_name": {"type": "string", "description": "Image name to push (e.g. myapp:latest)"},
+                "registry_url": {"type": "string", "description": "Registry URL (default: registry:5000)"},
             },
             "required": ["image_name"],
         },
@@ -106,14 +94,8 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "image_name": {
-                    "type": "string",
-                    "description": "Image name to pull (e.g. myapp:latest)",
-                },
-                "registry_url": {
-                    "type": "string",
-                    "description": "Registry URL (default: registry:5000)",
-                },
+                "image_name": {"type": "string", "description": "Image name to pull (e.g. myapp:latest)"},
+                "registry_url": {"type": "string", "description": "Registry URL (default: registry:5000)"},
             },
             "required": ["image_name"],
         },
@@ -124,14 +106,8 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "image_name_with_registry": {
-                    "type": "string",
-                    "description": "Full image name (e.g. registry:5000/myapp:latest)",
-                },
-                "command": {
-                    "type": "string",
-                    "description": "Optional command to override container CMD",
-                },
+                "image_name_with_registry": {"type": "string", "description": "Full image name (e.g. registry:5000/myapp:latest)"},
+                "command": {"type": "string", "description": "Optional command to override container CMD"},
             },
             "required": ["image_name_with_registry"],
         },
@@ -154,7 +130,7 @@ TOOLS = [
 ]
 
 
-# ── request handlers ────────────────────────────────────────────────────────
+# ── Handlers (shared) ──────────────────────────────────────────────────────
 
 async def list_tools(ctx, params):
     return ListToolsResult(tools=TOOLS)
@@ -172,9 +148,7 @@ async def call_tool(ctx, params):
                 "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]",
             )
             if not ensure_pod():
-                raise RuntimeError(
-                    "DinD pod is not running. Deploy: kubectl apply -f dind-pod.yaml"
-                )
+                raise RuntimeError("DinD pod not running. Deploy: kubectl apply -f dind-pod.yaml")
             ensure_dockerd()
             cmd = (
                 f"mkdir -p /tmp/dind-build && cd /tmp/dind-build && "
@@ -183,12 +157,7 @@ async def call_tool(ctx, params):
             )
             result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd])
             return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"# Build result for {image_name}\n\n```\n{result}\n```",
-                    )
-                ]
+                content=[TextContent(type="text", text=f"# Build result for {image_name}\n\n```\n{result}\n```")]
             )
 
         elif name == "dind_push":
@@ -199,12 +168,7 @@ async def call_tool(ctx, params):
             run_kubectl(["exec", POD, "--", "sh", "-c", f"docker tag {image_name} {tagged}"])
             result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker push {tagged}"])
             return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"# Push result for {tagged}\n\n```\n{result}\n```",
-                    )
-                ]
+                content=[TextContent(type="text", text=f"# Push result for {tagged}\n\n```\n{result}\n```")]
             )
 
         elif name == "dind_pull":
@@ -214,94 +178,58 @@ async def call_tool(ctx, params):
             ensure_dockerd()
             result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker pull {full_image}"])
             return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"# Pull result for {full_image}\n\n```\n{result}\n```",
-                    )
-                ]
+                content=[TextContent(type="text", text=f"# Pull result for {full_image}\n\n```\n{result}\n```")]
             )
 
         elif name == "dind_run":
             image_name_with_registry = arguments.get("image_name_with_registry", "")
             command = arguments.get("command", "")
             ensure_dockerd()
-            if command:
-                cmd_str = f"docker run --rm {image_name_with_registry} {command}"
-            else:
-                cmd_str = f"docker run --rm {image_name_with_registry}"
+            cmd_str = f"docker run --rm {image_name_with_registry} {command}" if command else f"docker run --rm {image_name_with_registry}"
             result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd_str])
             return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"# Run result for {image_name_with_registry}\n\n```\n{result}\n```",
-                    )
-                ]
+                content=[TextContent(type="text", text=f"# Run result for {image_name_with_registry}\n\n```\n{result}\n```")]
             )
 
         elif name == "dind_list_images":
             result = run_kubectl(["exec", POD, "--", "docker", "images"])
             return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"# Docker images in DinD pod\n\nNamespace: {NS}\nPod: {POD}\n\n```\n{result}\n```",
-                    )
-                ]
+                content=[TextContent(type="text", text=f"# Docker images in DinD pod\n\nNamespace: {NS}\nPod: {POD}\n\n```\n{result}\n```")]
             )
 
         elif name == "dind_list_registry":
-            catalog = run_kubectl(
-                ["exec", POD, "--", "sh", "-c",
-                 "wget -q -O- http://registry:5000/v2/_catalog"]
-            )
+            catalog = run_kubectl(["exec", POD, "--", "sh", "-c",
+                                  "wget -q -O- http://registry:5000/v2/_catalog"])
             return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"# Images in K8s registry\n\n```\n{catalog}\n```",
-                    )
-                ]
+                content=[TextContent(type="text", text=f"# Images in K8s registry\n\n```\n{catalog}\n```")]
             )
 
         elif name == "dind_cleanup":
             result = run_kubectl(["exec", POD, "--", "docker", "system", "prune", "-f"])
             return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=f"# Cleanup done\n\nAll unused images pruned:\n```\n{result}\n```",
-                    )
-                ]
+                content=[TextContent(type="text", text=f"# Cleanup done\n\nAll unused images pruned:\n```\n{result}\n```")]
             )
 
         else:
             raise ValueError(f"Unknown tool: {name}")
 
     except Exception as e:
-        return CallToolResult(
-            content=[TextContent(type="text", text=f"Error: {str(e)}")]
-        )
+        return CallToolResult(content=[TextContent(type="text", text=f"Error: {str(e)}")])
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
+# ── Stdio (Hermes Agent) ────────────────────────────────────────────────────
 
-async def main():
-    # CRITICAL: Pass on_list_tools and on_call_tool to the Server constructor
-    # This is what makes the MCP library route requests to our handlers
+async def run_stdio():
+    from mcp.server.stdio import stdio_server
+
     app = Server(
         "dind-build-factory",
         on_list_tools=list_tools,
         on_call_tool=call_tool,
     )
 
-    print("DinD Build Factory MCP Server v0.1.0", file=sys.stderr)
-    print(f"Namespace: {NS}  Pod: {POD}  Registry: {REGISTRY}", file=sys.stderr)
-    print("Tools:", file=sys.stderr)
-    for t in TOOLS:
-        print(f"  {t.name}: {t.description}", file=sys.stderr)
-    print(file=sys.stderr)
+    print(f"DinD Build Factory MCP Server (stdio)", file=sys.stderr)
+    print(f"Namespace: {NS}  Tools: {', '.join(t.name for t in TOOLS)}", file=sys.stderr)
 
     async with stdio_server() as (read_stream, write_stream):
         await app.run(
@@ -309,14 +237,53 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="dind-build-factory",
-                server_version="0.1.0",
+                server_version="0.2.0",
                 capabilities=app.get_capabilities(),
             ),
         )
+
+
+# ── HTTP (Open WebUI — Streamable HTTP, stateless mode) ────────────────────
+
+async def run_http(port: int = 8080):
+    app = Server(
+        "dind-build-factory",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
+
+    # stateless_http=True: simple JSON-RPC over HTTP, no session management
+    # This is the simplest mode and best for Open WebUI compatibility
+    starlette_app = app.streamable_http_app(
+        json_response=True,
+        stateless_http=True,  # No session negotiation needed
+    )
+
+    print(f"DinD Build Factory MCP Server (HTTP — stateless)", file=sys.stderr)
+    print(f"Namespace: {NS}  Tools: {', '.join(t.name for t in TOOLS)}", file=sys.stderr)
+    print(f"URL: http://0.0.0.0:{port}/mcp", file=sys.stderr)
+
+    import uvicorn
+    config = uvicorn.Config(starlette_app, host="0.0.0.0", port=port)
+    await uvicorn.Server(config).serve()
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+async def main():
+    parser = argparse.ArgumentParser(description="DinD Build Factory MCP Server")
+    parser.add_argument("--http", action="store_true", help="Run HTTP mode (for Open WebUI)")
+    parser.add_argument("--port", type=int, default=8080, help="HTTP port (default: 8080)")
+    args = parser.parse_args()
+
+    if args.http:
+        await run_http(args.port)
+    else:
+        await run_stdio()
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        pass
+        print("Server stopped.")
