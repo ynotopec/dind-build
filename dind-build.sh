@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # dind-build.sh — Build Docker images from inside K8s using DinD pod.
 # Usage: ./dind-build.sh IMAGE_NAME [BUILD_CONTEXT_DIR]
-#   IMAGE_NAME    : full image name (e.g. ghcr.io/ynotopec/myapp:latest)
+#   IMAGE_NAME    : full image name (e.g. myapp:latest)
 #   BUILD_CONTEXT : directory containing the Dockerfile (default: .)
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NS="${DIND_NAMESPACE:-demo1}"
 POD_NAME="dind-build"
 REGISTRY_HOST="registry:5000"
@@ -14,12 +15,12 @@ build_context="${2:-.}"
 
 kubectl() { command kubectl -n "$NS" "$@"; }
 
-# 1. Deploy pod (idempotent)
+# 1. Deploy pod (idempotent, only if it doesn't exist)
 if kubectl get pod "$POD_NAME" &>/dev/null; then
     echo "[✓] Pod $POD_NAME already exists."
 else
     echo "[→] Deploying DinD pod to namespace $NS..."
-    kubectl apply -f dind-pod.yaml
+    kubectl apply -f "$SCRIPT_DIR/dind-pod.yaml"
     echo "[→] Waiting for pod to be ready..."
     kubectl wait pod/dind-build --for=condition=ready --timeout=60s
     echo "[✓] Pod ready."
@@ -31,10 +32,8 @@ kubectl exec "$POD_NAME" -- sh -c '
 echo "[→] Stopping dockerd if running..."
 pkill dockerd 2>/dev/null || true
 sleep 2
-
 echo "[→] Starting dockerd with insecure registry..."
 dockerd --insecure-registry '"$REGISTRY_HOST"' &>/var/log/dockerd.log &
-
 echo "[→] Waiting for dockerd to be ready..."
 for i in $(seq 1 15); do
     if docker info >/dev/null 2>&1; then
