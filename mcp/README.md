@@ -122,6 +122,6 @@ Utiliser mcp_dind_run avec:
 |---------|------|
 | `dind-mcp-server.py` | Serveur MCP principal |
 | `README.md` | Ce fichier |
-| `../dind-build.sh` | Script build one-command |
-| `../dind-pod.yaml` | Manifest pod K8s |
-| `../registry.yaml` | Manifest registry K8s |
+| `../dind-build.sh` | Script build one-command (usine) |
+| `../dind-pod.yaml` | Manifest pod K8s (usine) |
+| `../registry.yaml` | Manifest registry K8s (usine) |
