@@ -19,7 +19,8 @@ import subprocess
 import sys
 import os
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp_types import Tool
 
 # ── K8s config ──────────────────────────────────────────────────────────────
 
@@ -53,150 +54,185 @@ def ensure_dockerd():
         time.sleep(2)
 
 
+# ── Tool implementations (pure functions) ──────────────────────────────────
+
+def _dind_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]") -> str:
+    """Build a Docker image inside the K8s DinD pod."""
+    if not ensure_pod():
+        raise RuntimeError("DinD pod not running. Deploy: kubectl apply -f dind-pod.yaml")
+    ensure_dockerd()
+    cmd = (
+        f"mkdir -p /tmp/dind-build && cd /tmp/dind-build && "
+        f"cat > Dockerfile << 'DEOF'\n{dockerfile_content}\nDEOF\n"
+        f"docker build -t {image_name} /tmp/dind-build"
+    )
+    result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd])
+    return f"# Build result for {image_name}\n\n```\n{result}\n```"
+
+
+def _dind_push(image_name: str, registry_url: str = REGISTRY) -> str:
+    """Push an image to the local K8s registry (registry:5000)."""
+    tagged = f"{registry_url}/{image_name}"
+    ensure_dockerd()
+    run_kubectl(["exec", POD, "--", "sh", "-c", f"docker tag {image_name} {tagged}"])
+    result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker push {tagged}"])
+    return f"# Push result for {tagged}\n\n```\n{result}\n```"
+
+
+def _dind_pull(image_name: str, registry_url: str = REGISTRY) -> str:
+    """Pull an image from the local K8s registry."""
+    full_image = f"{registry_url}/{image_name}"
+    ensure_dockerd()
+    result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker pull {full_image}"])
+    return f"# Pull result for {full_image}\n\n```\n{result}\n```"
+
+
+def _dind_run(image_name_with_registry: str, command: str = "") -> str:
+    """Run a container from the K8s registry."""
+    ensure_dockerd()
+    cmd_str = f"docker run --rm {image_name_with_registry} {command}" if command else f"docker run --rm {image_name_with_registry}"
+    result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd_str])
+    return f"# Run result for {image_name_with_registry}\n\n```\n{result}\n```"
+
+
+def _dind_list_images() -> str:
+    """List all Docker images stored in the DinD pod."""
+    result = run_kubectl(["exec", POD, "--", "docker", "images"])
+    return f"# Docker images in DinD pod\n\nNamespace: {NS}\nPod: {POD}\n\n```\n{result}\n```"
+
+
+def _dind_list_registry() -> str:
+    """List all images stored in the K8s registry."""
+    catalog = run_kubectl(["exec", POD, "--", "sh", "-c",
+                          "wget -q -O- http://registry:5000/v2/_catalog"])
+    return f"# Images in K8s registry\n\n```\n{catalog}\n```"
+
+
+def _dind_cleanup() -> str:
+    """Prune all unused Docker images from the DinD pod to free space."""
+    result = run_kubectl(["exec", POD, "--", "docker", "system", "prune", "-f"])
+    return f"# Cleanup done\n\nAll unused images pruned:\n```\n{result}\n```"
+
+
+# ── Tool metadata table ───────────────────────────────────────────────────
+
+TOOL_TABLE = {
+    "dind_build": {
+        "fn": _dind_build,
+        "description": "Build a Docker image inside the K8s DinD pod.",
+        "params": {
+            "type": "object",
+            "properties": {
+                "image_name": {"type": "string", "description": "Name of the image to build"},
+                "dockerfile_content": {
+                    "type": "string",
+                    "description": "Dockerfile content",
+                    "default": "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]"
+                }
+            },
+            "required": ["image_name"]
+        }
+    },
+    "dind_push": {
+        "fn": _dind_push,
+        "description": "Push an image to the local K8s registry (registry:5000).",
+        "params": {
+            "type": "object",
+            "properties": {
+                "image_name": {"type": "string", "description": "Name of the image to push"},
+                "registry_url": {"type": "string", "description": "Registry URL", "default": REGISTRY}
+            },
+            "required": ["image_name"]
+        }
+    },
+    "dind_pull": {
+        "fn": _dind_pull,
+        "description": "Pull an image from the local K8s registry.",
+        "params": {
+            "type": "object",
+            "properties": {
+                "image_name": {"type": "string", "description": "Name of the image to pull"},
+                "registry_url": {"type": "string", "description": "Registry URL", "default": REGISTRY}
+            },
+            "required": ["image_name"]
+        }
+    },
+    "dind_run": {
+        "fn": _dind_run,
+        "description": "Run a container from the K8s registry.",
+        "params": {
+            "type": "object",
+            "properties": {
+                "image_name_with_registry": {"type": "string", "description": "Full image name with registry"},
+                "command": {"type": "string", "description": "Command to run inside the container", "default": ""}
+            },
+            "required": ["image_name_with_registry"]
+        }
+    },
+    "dind_list_images": {
+        "fn": _dind_list_images,
+        "description": "List all Docker images stored in the DinD pod.",
+        "params": {"type": "object", "properties": {}}
+    },
+    "dind_list_registry": {
+        "fn": _dind_list_registry,
+        "description": "List all images stored in the K8s registry.",
+        "params": {"type": "object", "properties": {}}
+    },
+    "dind_cleanup": {
+        "fn": _dind_cleanup,
+        "description": "Prune all unused Docker images from the DinD pod to free space.",
+        "params": {"type": "object", "properties": {}}
+    }
+}
+
+TOOL_NAMES = list(TOOL_TABLE.keys())
+
+
 # ── Stdio (Hermes Agent) ────────────────────────────────────────────────────
 
 async def run_stdio():
-    server = FastMCP("dind-build-factory")
+    server = MCPServer(name="dind-build-factory")
 
-    @server.tool()
-    def dind_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]") -> str:
-        """Build a Docker image inside the K8s DinD pod."""
-        if not ensure_pod():
-            raise RuntimeError("DinD pod not running. Deploy: kubectl apply -f dind-pod.yaml")
-        ensure_dockerd()
-        cmd = (
-            f"mkdir -p /tmp/dind-build && cd /tmp/dind-build && "
-            f"cat > Dockerfile << 'DEOF'\n{dockerfile_content}\nDEOF\n"
-            f"docker build -t {image_name} /tmp/dind-build"
+    # Register tools via ToolManager
+    for tool_name, tool_def in TOOL_TABLE.items():
+        server._tool_manager.add_tool(
+            tool_def["fn"],
+            name=tool_name,
+            description=tool_def["description"],
         )
-        result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd])
-        return f"# Build result for {image_name}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_push(image_name: str, registry_url: str = REGISTRY) -> str:
-        """Push an image to the local K8s registry (registry:5000)."""
-        tagged = f"{registry_url}/{image_name}"
-        ensure_dockerd()
-        run_kubectl(["exec", POD, "--", "sh", "-c", f"docker tag {image_name} {tagged}"])
-        result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker push {tagged}"])
-        return f"# Push result for {tagged}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_pull(image_name: str, registry_url: str = REGISTRY) -> str:
-        """Pull an image from the local K8s registry."""
-        full_image = f"{registry_url}/{image_name}"
-        ensure_dockerd()
-        result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker pull {full_image}"])
-        return f"# Pull result for {full_image}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_run(image_name_with_registry: str, command: str = "") -> str:
-        """Run a container from the K8s registry."""
-        ensure_dockerd()
-        cmd_str = f"docker run --rm {image_name_with_registry} {command}" if command else f"docker run --rm {image_name_with_registry}"
-        result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd_str])
-        return f"# Run result for {image_name_with_registry}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_list_images() -> str:
-        """List all Docker images stored in the DinD pod."""
-        result = run_kubectl(["exec", POD, "--", "docker", "images"])
-        return f"# Docker images in DinD pod\n\nNamespace: {NS}\nPod: {POD}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_list_registry() -> str:
-        """List all images stored in the K8s registry."""
-        catalog = run_kubectl(["exec", POD, "--", "sh", "-c",
-                              "wget -q -O- http://registry:5000/v2/_catalog"])
-        return f"# Images in K8s registry\n\n```\n{catalog}\n```"
-
-    @server.tool()
-    def dind_cleanup() -> str:
-        """Prune all unused Docker images from the DinD pod to free space."""
-        result = run_kubectl(["exec", POD, "--", "docker", "system", "prune", "-f"])
-        return f"# Cleanup done\n\nAll unused images pruned:\n```\n{result}\n```"
 
     print(f"DinD Build Factory MCP Server (stdio)", file=sys.stderr)
-    print(f"Namespace: {NS}  Tools: dind_build, dind_push, dind_pull, dind_run, dind_list_images, dind_list_registry, dind_cleanup", file=sys.stderr)
+    print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
 
+    # Use MCPServer's built-in stdio runner
     await server.run_stdio_async()
 
 
 # ── HTTP (Open WebUI — Streamable HTTP, stateless mode) ────────────────────
 
 async def run_http(port: int = 8080):
-    server = FastMCP(
-        "dind-build-factory",
+    server = MCPServer(name="dind-build-factory")
+
+    # Register tools
+    for tool_name, tool_def in TOOL_TABLE.items():
+        server._tool_manager.add_tool(
+            tool_def["fn"],
+            name=tool_name,
+            description=tool_def["description"],
+        )
+
+    print(f"DinD Build Factory MCP Server (HTTP — stateless)", file=sys.stderr)
+    print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
+    print(f"URL: http://0.0.0.0:{port}/mcp", file=sys.stderr)
+
+    # Use MCPServer's built-in streamable HTTP runner
+    await server.run_streamable_http_async(
         host="0.0.0.0",
         port=port,
         streamable_http_path="/mcp",
-        json_response=True,
         stateless_http=True,
     )
-
-    @server.tool()
-    def dind_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]") -> str:
-        """Build a Docker image inside the K8s DinD pod."""
-        if not ensure_pod():
-            raise RuntimeError("DinD pod not running. Deploy: kubectl apply -f dind-pod.yaml")
-        ensure_dockerd()
-        cmd = (
-            f"mkdir -p /tmp/dind-build && cd /tmp/dind-build && "
-            f"cat > Dockerfile << 'DEOF'\n{dockerfile_content}\nDEOF\n"
-            f"docker build -t {image_name} /tmp/dind-build"
-        )
-        result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd])
-        return f"# Build result for {image_name}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_push(image_name: str, registry_url: str = REGISTRY) -> str:
-        """Push an image to the local K8s registry (registry:5000)."""
-        tagged = f"{registry_url}/{image_name}"
-        ensure_dockerd()
-        run_kubectl(["exec", POD, "--", "sh", "-c", f"docker tag {image_name} {tagged}"])
-        result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker push {tagged}"])
-        return f"# Push result for {tagged}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_pull(image_name: str, registry_url: str = REGISTRY) -> str:
-        """Pull an image from the local K8s registry."""
-        full_image = f"{registry_url}/{image_name}"
-        ensure_dockerd()
-        result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker pull {full_image}"])
-        return f"# Pull result for {full_image}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_run(image_name_with_registry: str, command: str = "") -> str:
-        """Run a container from the K8s registry."""
-        ensure_dockerd()
-        cmd_str = f"docker run --rm {image_name_with_registry} {command}" if command else f"docker run --rm {image_name_with_registry}"
-        result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd_str])
-        return f"# Run result for {image_name_with_registry}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_list_images() -> str:
-        """List all Docker images stored in the DinD pod."""
-        result = run_kubectl(["exec", POD, "--", "docker", "images"])
-        return f"# Docker images in DinD pod\n\nNamespace: {NS}\nPod: {POD}\n\n```\n{result}\n```"
-
-    @server.tool()
-    def dind_list_registry() -> str:
-        """List all images stored in the K8s registry."""
-        catalog = run_kubectl(["exec", POD, "--", "sh", "-c",
-                              "wget -q -O- http://registry:5000/v2/_catalog"])
-        return f"# Images in K8s registry\n\n```\n{catalog}\n```"
-
-    @server.tool()
-    def dind_cleanup() -> str:
-        """Prune all unused Docker images from the DinD pod to free space."""
-        result = run_kubectl(["exec", POD, "--", "docker", "system", "prune", "-f"])
-        return f"# Cleanup done\n\nAll unused images pruned:\n```\n{result}\n```"
-
-    print(f"DinD Build Factory MCP Server (HTTP — stateless)", file=sys.stderr)
-    print(f"Namespace: {NS}  Tools: dind_build, dind_push, dind_pull, dind_run, dind_list_images, dind_list_registry, dind_cleanup", file=sys.stderr)
-    print(f"URL: http://0.0.0.0:{port}/mcp", file=sys.stderr)
-
-    await server.run_streamable_http_async()
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
