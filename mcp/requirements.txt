@@ -1,0 +1,2 @@
+# MCP 2.x retains FastMCP as its documented high-level server API.
+mcp==2.0.0

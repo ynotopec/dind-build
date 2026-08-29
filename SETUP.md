@@ -15,7 +15,7 @@ L'usine de build Docker K8s est 100% reproductible. Voici la procédure complèt
 Un seul script déploie tout :
 
 ```bash
-./dind-build-setup.sh [namespace] [pod-name] [registry-url]
+./dind-build-setup.sh [namespace]
 ```
 
 Déploie automatiquement :
@@ -59,7 +59,7 @@ mcp_servers:
 
 ```bash
 # Sur chaque machine qui héberge un agent
-pip install mcp
+python3 -m pip install -r mcp/requirements.txt
 
 # Ajouter dans config.yaml (voir ci-dessus)
 # Redémarrer l'agent
@@ -99,6 +99,6 @@ kubectl -n demo1 exec dind-build -- docker push registry:5000/myapp:latest
 
 1. Copier les fichiers du repo `ynotopec/dind-build`
 2. Lancer `./dind-build-setup.sh [namespace]`
-3. Configurer le client (pip install mcp + config.yaml)
+3. Configurer le client (`pip install -r mcp/requirements.txt` + `config.yaml`)
 4. Redémarrer l'agent
 5. Build !

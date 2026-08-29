@@ -2,12 +2,11 @@
 # dind-build-setup.sh — Deploy the entire DinD Build Factory on any K8s cluster.
 #
 # Usage:
-#   ./dind-build-setup.sh [namespace] [pod-name] [registry-url]
+#   ./dind-build-setup.sh [namespace]
 #
 # Examples:
 #   ./dind-build-setup.sh                       # defaults
-#   ./dind-build-setup.sh my-namespace           # custom namespace only
-#   ./dind-build-setup.sh my-ns my-dind my-registry.com:5000  # all custom
+#   ./dind-build-setup.sh my-namespace           # custom namespace
 #
 # This deploys:
 #   1. DinD pod (docker builder inside K8s)
@@ -18,8 +17,8 @@
 set -euo pipefail
 
 NS="${1:-demo1}"
-POD="${2:-dind-build}"
-REGISTRY="${3:-registry:5000}"
+POD="dind-build"
+REGISTRY="registry:5000"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 kubectl() { command kubectl -n "$NS" "$@"; }
@@ -64,7 +63,7 @@ echo "  ── SERVER (done) ─────────────────
 echo "  DinD pod and K8s registry are now running."
 echo ""
 echo "  ── CLIENT (Agent) ───────────────────────────────"
-echo "  1. pip install mcp"
+echo "  1. python3 -m pip install -r '$SCRIPT_DIR/mcp/requirements.txt'"
 echo "  2. Add to ~/.hermes/config.yaml:"
 echo ""
 echo "    mcp_servers:"
