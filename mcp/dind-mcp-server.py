@@ -1,4 +1,4 @@
-#!/home/ai-agent/.hermes/hermes-agent/venv/bin/python3
+#!/usr/bin/env python3
 """
 DinD Build Factory MCP Server — dual transport.
 
@@ -15,12 +15,13 @@ K8s config:
 
 import argparse
 import asyncio
+import base64
+import os
+import shlex
 import subprocess
 import sys
-import os
 
-from mcp.server.mcpserver import MCPServer
-from mcp_types import Tool
+from mcp.server.fastmcp import FastMCP
 
 # ── K8s config ──────────────────────────────────────────────────────────────
 
@@ -33,12 +34,18 @@ REGISTRY = "registry:5000"
 
 def run_kubectl(args: list[str]) -> str:
     cmd = ["kubectl", "-n", NS] + args
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    return result.stdout.strip() or result.stderr.strip()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    output = result.stdout.strip() or result.stderr.strip()
+    if result.returncode:
+        raise RuntimeError(f"kubectl exited with status {result.returncode}: {output or '(no output)'}")
+    return output
 
 
 def ensure_pod() -> bool:
-    status = run_kubectl(["get", "pod", POD, "-o", "jsonpath={.status.phase}"])
+    try:
+        status = run_kubectl(["get", "pod", POD, "-o", "jsonpath={.status.phase}"])
+    except RuntimeError:
+        return False
     return status == "Running"
 
 
@@ -52,6 +59,7 @@ def ensure_dockerd():
         if "OK" in result:
             return
         time.sleep(2)
+    raise RuntimeError("Docker daemon did not become ready within 20 seconds")
 
 
 # ── Tool implementations (pure functions) ──────────────────────────────────
@@ -61,10 +69,11 @@ def _dind_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRU
     if not ensure_pod():
         raise RuntimeError("DinD pod not running. Deploy: kubectl apply -f dind-pod.yaml")
     ensure_dockerd()
+    encoded = base64.b64encode(dockerfile_content.encode()).decode("ascii")
     cmd = (
-        f"mkdir -p /tmp/dind-build && cd /tmp/dind-build && "
-        f"cat > Dockerfile << 'DEOF'\n{dockerfile_content}\nDEOF\n"
-        f"docker build -t {image_name} /tmp/dind-build"
+        "rm -rf /tmp/dind-build && mkdir -p /tmp/dind-build && "
+        f"printf %s {shlex.quote(encoded)} | base64 -d > /tmp/dind-build/Dockerfile && "
+        f"docker build -t {shlex.quote(image_name)} /tmp/dind-build"
     )
     result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd])
     return f"# Build result for {image_name}\n\n```\n{result}\n```"
@@ -74,8 +83,8 @@ def _dind_push(image_name: str, registry_url: str = REGISTRY) -> str:
     """Push an image to the local K8s registry (registry:5000)."""
     tagged = f"{registry_url}/{image_name}"
     ensure_dockerd()
-    run_kubectl(["exec", POD, "--", "sh", "-c", f"docker tag {image_name} {tagged}"])
-    result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker push {tagged}"])
+    run_kubectl(["exec", POD, "--", "docker", "tag", image_name, tagged])
+    result = run_kubectl(["exec", POD, "--", "docker", "push", tagged])
     return f"# Push result for {tagged}\n\n```\n{result}\n```"
 
 
@@ -83,14 +92,16 @@ def _dind_pull(image_name: str, registry_url: str = REGISTRY) -> str:
     """Pull an image from the local K8s registry."""
     full_image = f"{registry_url}/{image_name}"
     ensure_dockerd()
-    result = run_kubectl(["exec", POD, "--", "sh", "-c", f"docker pull {full_image}"])
+    result = run_kubectl(["exec", POD, "--", "docker", "pull", full_image])
     return f"# Pull result for {full_image}\n\n```\n{result}\n```"
 
 
 def _dind_run(image_name_with_registry: str, command: str = "") -> str:
     """Run a container from the K8s registry."""
     ensure_dockerd()
-    cmd_str = f"docker run --rm {image_name_with_registry} {command}" if command else f"docker run --rm {image_name_with_registry}"
+    cmd_str = f"docker run --rm {shlex.quote(image_name_with_registry)}"
+    if command:
+        cmd_str += f" sh -c {shlex.quote(command)}"
     result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd_str])
     return f"# Run result for {image_name_with_registry}\n\n```\n{result}\n```"
 
@@ -189,50 +200,40 @@ TOOL_TABLE = {
 TOOL_NAMES = list(TOOL_TABLE.keys())
 
 
+def create_server(**settings) -> FastMCP:
+    """Create a server using the SDK's documented public API."""
+    server = FastMCP("dind-build-factory", **settings)
+    for tool_name, tool_def in TOOL_TABLE.items():
+        server.add_tool(
+            tool_def["fn"], name=tool_name, description=tool_def["description"]
+        )
+    return server
+
+
 # ── Stdio (Hermes Agent) ────────────────────────────────────────────────────
 
 async def run_stdio():
-    server = MCPServer(name="dind-build-factory")
+    server = create_server()
 
-    # Register tools via ToolManager
-    for tool_name, tool_def in TOOL_TABLE.items():
-        server._tool_manager.add_tool(
-            tool_def["fn"],
-            name=tool_name,
-            description=tool_def["description"],
-        )
-
-    print(f"DinD Build Factory MCP Server (stdio)", file=sys.stderr)
+    print("DinD Build Factory MCP Server (stdio)", file=sys.stderr)
     print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
-
-    # Use MCPServer's built-in stdio runner
     await server.run_stdio_async()
 
 
 # ── HTTP (Open WebUI — Streamable HTTP, stateless mode) ────────────────────
 
 async def run_http(port: int = 8080):
-    server = MCPServer(name="dind-build-factory")
-
-    # Register tools
-    for tool_name, tool_def in TOOL_TABLE.items():
-        server._tool_manager.add_tool(
-            tool_def["fn"],
-            name=tool_name,
-            description=tool_def["description"],
-        )
-
-    print(f"DinD Build Factory MCP Server (HTTP — stateless)", file=sys.stderr)
-    print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
-    print(f"URL: http://0.0.0.0:{port}/mcp", file=sys.stderr)
-
-    # Use MCPServer's built-in streamable HTTP runner
-    await server.run_streamable_http_async(
+    server = create_server(
         host="0.0.0.0",
         port=port,
         streamable_http_path="/mcp",
         stateless_http=True,
     )
+
+    print("DinD Build Factory MCP Server (HTTP — stateless)", file=sys.stderr)
+    print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
+    print(f"URL: http://0.0.0.0:{port}/mcp", file=sys.stderr)
+    await server.run_streamable_http_async()
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ Interface simple pour builder/push/pull des images Docker via un pod Kubernetes 
 ### 1. Installer le MCP server
 
 ```bash
-pip install mcp
+python3 -m pip install -r requirements.txt
 ```
 
 ### 2. Configurer l'agent
@@ -30,7 +30,7 @@ Ajouter dans `config.yaml` :
 mcp_servers:
   dind-build:
     command: python3
-    args: ["/home/ai-agent/work/dind-build/mcp/dind-mcp-server.py"]
+    args: ["/path/to/dind-build/mcp/dind-mcp-server.py"]
     timeout: 300
 ```
 
