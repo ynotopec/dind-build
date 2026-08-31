@@ -8,7 +8,7 @@ spec:
   containers:
   - name: docker
     image: docker:24-dind
-    command: ["sh", "-c", "dockerd --insecure-registry registry:5000 &>/var/log/dockerd.log & sleep 3600"]
+    command: ["sh", "-c", "dockerd --insecure-registry registry:5000 &>/var/log/dockerd.log & sleep infinity"]
     securityContext:
       privileged: true
     volumeMounts:
