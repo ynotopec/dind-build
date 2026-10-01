@@ -17,7 +17,10 @@ droits nécessaires à l'identité utilisée par `kubectl`. Le script n'essaie p
 de créer le namespace et ne requiert donc aucun droit global au cluster :
 
 ```bash
-KUBE_NAMESPACE="<namespace>" ./docker-build-setup.sh
+KUBE_NAMESPACE="<namespace>" \
+TLS_HOST="registry.example.com" \
+CERT_MANAGER_CLUSTER_ISSUER="letsencrypt-production" \
+./docker-build-setup.sh
 ```
 
 Le script utilise le chart Helm `chart/` et déploie automatiquement :
@@ -26,10 +29,10 @@ Le script utilise le chart Helm `chart/` et déploie automatiquement :
 
 Le pod et la registry démarrent en parallèle, puis le script attend leur disponibilité.
 
-### Registry HTTPS (optionnelle)
+### Registry HTTPS (obligatoire)
 
-Sans configuration supplémentaire, la registry est un `ClusterIP` interne. Une
-exposition TLS peut être activée avec les deux valeurs suivantes :
+La registry conserve son service `ClusterIP` interne et doit obligatoirement
+être exposée en TLS par un Ingress. Les deux valeurs suivantes sont requises :
 
 ```bash
 export KUBE_NAMESPACE="<namespace>"
@@ -38,8 +41,8 @@ export CERT_MANAGER_CLUSTER_ISSUER="letsencrypt-production"
 ./docker-build-setup.sh
 ```
 
-`TLS_HOST` et `CERT_MANAGER_CLUSTER_ISSUER` sont indissociables : le script échoue si une
-seule valeur est fournie. Le chart crée alors un Ingress annoté avec
+Le script échoue si `TLS_HOST` ou `CERT_MANAGER_CLUSTER_ISSUER` manque. Le chart
+crée systématiquement un Ingress annoté avec
 `cert-manager.io/cluster-issuer`. Le `ClusterIssuer`, cert-manager, un contrôleur
 Ingress et l'enregistrement DNS doivent exister avant le déploiement. Pour
 personnaliser davantage l'Ingress :
@@ -47,7 +50,6 @@ personnaliser davantage l'Ingress :
 ```bash
 helm upgrade --install docker-build ./chart \
   --namespace "$KUBE_NAMESPACE" \
-  --set ingress.enabled=true \
   --set-string ingress.host=registry.example.com \
   --set-string certManager.clusterIssuer=letsencrypt-production \
   --set-string ingress.className=nginx
@@ -95,6 +97,8 @@ Ajouter le serveur à la configuration standard du client MCP :
 ```bash
 # À faire dans le namespace existant préparé par un administrateur
 export KUBE_NAMESPACE="<namespace>"
+export TLS_HOST="registry.example.com"
+export CERT_MANAGER_CLUSTER_ISSUER="letsencrypt-production"
 ./docker-build-setup.sh
 ```
 
@@ -124,7 +128,7 @@ kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker push registry:5000/myap
 |---------|------|
 | `docker-build-setup.sh` | Déploiement complet de l'usine (server) |
 | `docker-build.sh` | Build one-command |
-| `chart/` | Chart Helm (pod, registry et Ingress TLS optionnel) |
+| `chart/` | Chart Helm (pod, registry et Ingress TLS obligatoire) |
 | `docker-build-pod.yaml` | Manifest pod historique utilisé par `docker-build.sh` en secours |
 | `registry.yaml` | Manifest registry historique |
 | `mcp/docker-build-mcp-server.py` | Serveur MCP (7 outils) |
@@ -144,7 +148,7 @@ kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker push registry:5000/myap
 
 1. Copier les fichiers de ce dépôt
 2. Faire créer un namespace dédié et y accorder les droits nécessaires
-3. Définir `KUBE_NAMESPACE`, puis lancer `./docker-build-setup.sh`
+3. Définir `KUBE_NAMESPACE`, `TLS_HOST` et `CERT_MANAGER_CLUSTER_ISSUER`, puis lancer `./docker-build-setup.sh`
 4. Lancer `./install.sh`, puis configurer le client MCP
 5. Redémarrer l'agent
 6. Build !

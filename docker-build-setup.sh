@@ -22,6 +22,15 @@ CERT_MANAGER_CLUSTER_ISSUER="${CERT_MANAGER_CLUSTER_ISSUER:-}"
 
 kubectl() { command kubectl -n "$NS" "$@"; }
 
+if [[ -z "$TLS_HOST" || "$TLS_HOST" == "<tls-host>" ]]; then
+    echo "Error: TLS_HOST is required; the registry must be exposed over TLS." >&2
+    exit 2
+fi
+if [[ -z "$CERT_MANAGER_CLUSTER_ISSUER" || "$CERT_MANAGER_CLUSTER_ISSUER" == "<cluster-issuer>" ]]; then
+    echo "Error: CERT_MANAGER_CLUSTER_ISSUER is required; the registry must be exposed over TLS." >&2
+    exit 2
+fi
+
 # The namespace must be provisioned by an administrator. Keep every operation
 # namespace-scoped so this setup does not require cluster-wide permissions.
 if ! kubectl get pods >/dev/null; then
@@ -34,12 +43,6 @@ if ! command -v helm >/dev/null 2>&1; then
     exit 1
 fi
 
-if [[ -n "$TLS_HOST" && -z "$CERT_MANAGER_CLUSTER_ISSUER" ]] || \
-   [[ -z "$TLS_HOST" && -n "$CERT_MANAGER_CLUSTER_ISSUER" ]]; then
-    echo "Error: TLS_HOST and CERT_MANAGER_CLUSTER_ISSUER must be set together." >&2
-    exit 2
-fi
-
 echo "═══════════════════════════════════════════════════════"
 echo "  Docker Build Factory — Setup"
 echo "═══════════════════════════════════════════════════════"
@@ -47,9 +50,7 @@ echo ""
 echo "  Namespace:  $NS"
 echo "  Pod:        $POD"
 echo "  Registry:   $REGISTRY"
-if [[ -n "$TLS_HOST" ]]; then
-    echo "  Registry TLS: https://$TLS_HOST (ClusterIssuer: $CERT_MANAGER_CLUSTER_ISSUER)"
-fi
+echo "  Registry TLS: https://$TLS_HOST (ClusterIssuer: $CERT_MANAGER_CLUSTER_ISSUER)"
 echo ""
 
 # ── 1. Deploy the Helm release ─────────────────────────────────────────────
@@ -73,13 +74,10 @@ helm_args=(
     --wait
     --timeout 2m
 )
-if [[ -n "$TLS_HOST" ]]; then
-    helm_args+=(
-        --set "ingress.enabled=true"
-        --set-string "ingress.host=$TLS_HOST"
-        --set-string "certManager.clusterIssuer=$CERT_MANAGER_CLUSTER_ISSUER"
-    )
-fi
+helm_args+=(
+    --set-string "ingress.host=$TLS_HOST"
+    --set-string "certManager.clusterIssuer=$CERT_MANAGER_CLUSTER_ISSUER"
+)
 helm "${helm_args[@]}"
 
 # Helm starts both workloads before waiting. Keep explicit checks to provide a

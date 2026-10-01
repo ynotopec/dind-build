@@ -7,7 +7,6 @@ registry:
   storageSizeLimit: 5Gi
 
 ingress:
-  enabled: false
   className: ""
   host: ""
   annotations: {}
@@ -15,6 +14,6 @@ ingress:
     secretName: docker-build-registry-tls
 
 certManager:
-  # Name of an existing cert-manager ClusterIssuer. Leave empty when managing
-  # the Ingress certificate outside cert-manager.
+  # Name of the existing cert-manager ClusterIssuer used for the mandatory
+  # registry TLS certificate.
   clusterIssuer: ""

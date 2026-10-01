@@ -1,20 +1,16 @@
-{{- if .Values.ingress.enabled }}
-{{- $host := required "ingress.host is required when ingress.enabled is true" .Values.ingress.host }}
+{{- $host := required "ingress.host is required because registry TLS is mandatory" .Values.ingress.host }}
+{{- $clusterIssuer := required "certManager.clusterIssuer is required because registry TLS is mandatory" .Values.certManager.clusterIssuer }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: registry
   labels:
     {{- include "docker-build.labels" . | nindent 4 }}
-  {{- if or .Values.certManager.clusterIssuer .Values.ingress.annotations }}
   annotations:
-    {{- with .Values.certManager.clusterIssuer }}
-    cert-manager.io/cluster-issuer: {{ . | quote }}
-    {{- end }}
+    cert-manager.io/cluster-issuer: {{ $clusterIssuer | quote }}
     {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-  {{- end }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}
@@ -33,5 +29,4 @@ spec:
   tls:
     - hosts:
         - {{ $host | quote }}
-      secretName: {{ required "ingress.tls.secretName is required when ingress.enabled is true" .Values.ingress.tls.secretName | quote }}
-{{- end }}
+      secretName: {{ required "ingress.tls.secretName is required because registry TLS is mandatory" .Values.ingress.tls.secretName | quote }}
