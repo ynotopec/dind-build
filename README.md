@@ -54,6 +54,10 @@ kubectl delete -f dind-pod.yaml
 ## Important
 
 - Les images construites vivent **dans le pod uniquement** → il faut les push avant de détruire le pod.
+- Une session d'agent ne transporte ni sa découverte des outils MCP, ni son
+  environnement (`PATH`, `KUBECONFIG`, namespace) vers une autre session. Si
+  les outils disparaissent après un changement de session, consulter le
+  [diagnostic de session MCP](mcp/README.md#changement-de-session--pourquoi-les-outils-peuvent-disparaître).
 - Le pod a besoin d'être `privileged` et d'avoir PSA non `restricted` sur le namespace.
 - Stockage limité à 5 Go via `emptyDir.sizeLimit`.
 - Les couches Docker sont conservées entre les builds pour accélérer les builds répétés. Pour nettoyer avant un build : `DIND_PRUNE_BEFORE_BUILD=true ./dind-build.sh ...`.

@@ -58,6 +58,79 @@ mcp_dind_list_registry
 mcp_dind_cleanup
 ```
 
+## Changement de session : pourquoi les outils peuvent disparaître
+
+L'installation du pod DinD et l'exposition de ses outils à l'agent sont deux
+choses distinctes. Le pod peut être parfaitement fonctionnel alors qu'une
+nouvelle session ne charge pas le serveur MCP. Chaque session redécouvre ses
+outils au démarrage à partir de **sa propre configuration** et de
+l'environnement du processus qui lance l'agent.
+
+Les causes les plus fréquentes sont :
+
+- la nouvelle session utilise un autre utilisateur, profil ou fichier
+  `config.yaml` ;
+- `command: python3` désigne un autre interpréteur, dans lequel le paquet
+  `mcp` n'est pas installé ;
+- le chemin relatif du script ne fonctionne plus depuis le nouveau répertoire
+  courant ;
+- `KUBECONFIG`, le contexte Kubernetes ou `KUBE_NAMESPACE` diffère ;
+- le serveur MCP a été ajouté après le démarrage de la session : la liste des
+  outils de cette session ne se met pas nécessairement à jour à chaud ;
+- le pod a été recréé : son volume `emptyDir` est neuf et les images locales
+  non poussées ont disparu.
+
+### Configuration durable
+
+Utiliser des chemins absolus pour l'interpréteur et le serveur. Trouver le
+chemin de l'interpréteur dans lequel les dépendances ont été installées avec :
+
+```bash
+python3 -c 'import sys; print(sys.executable)'
+```
+
+Puis reporter ce chemin dans la configuration globale réellement lue par
+l'agent :
+
+```yaml
+mcp_servers:
+  dind-build:
+    command: /chemin/absolu/vers/python3
+    args: ["/chemin/absolu/vers/dind-build/mcp/dind-mcp-server.py"]
+    timeout: 300
+```
+
+Fermer puis recréer la session après cette modification. Pour conserver une
+image indépendamment de la durée de vie du pod, la pousser dans la registry ;
+une image seulement visible dans `docker images` du pod n'est pas persistante.
+
+### Diagnostic depuis la nouvelle session
+
+Exécuter les commandes suivantes **dans le même environnement que l'agent** :
+
+```bash
+# 1. Le client MCP peut-il démarrer avec cet interpréteur ?
+/chemin/absolu/vers/python3 -c 'import mcp; print(mcp.__file__)'
+
+# 2. La session vise-t-elle le bon cluster et le bon namespace ?
+kubectl config current-context
+kubectl -n "${KUBE_NAMESPACE:-demo1}" get pod dind-build
+
+# 3. Le daemon Docker du pod répond-il ?
+kubectl -n "${KUBE_NAMESPACE:-demo1}" exec dind-build -- docker info
+
+# 4. Les images sont-elles encore dans ce pod ?
+kubectl -n "${KUBE_NAMESPACE:-demo1}" exec dind-build -- docker images
+```
+
+Interprétation :
+
+- outil `mcp_dind_build` absent : problème de configuration/découverte MCP ;
+- outil présent mais erreur `pod not found` : mauvais contexte ou namespace ;
+- pod présent mais `docker info` échoue : problème du daemon DinD ;
+- `docker info` réussit mais l'image manque : le pod a probablement été
+  recréé, ou l'image avait été construite dans un autre contexte Kubernetes.
+
 ### Transport HTTP
 
 ```bash
@@ -126,6 +199,9 @@ Utiliser mcp_dind_run avec:
 | dockerd ne démarre pas | Vérifier les logs `kubectl logs dind-build` |
 | Push échoue | Vérifier `insecure-registry` dans le pod |
 | Outils non visibles | Redémarrer l'agent après ajout dans config.yaml |
+| Outils absents dans une nouvelle session | Vérifier le profil/configuration chargé et utiliser des chemins absolus |
+| Pod introuvable après changement de session | Comparer `kubectl config current-context` et `KUBE_NAMESPACE` |
+| Images disparues | Vérifier si le pod a été recréé ; pousser les images importantes dans la registry |
 
 ## Fichiers
 
