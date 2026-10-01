@@ -6,7 +6,7 @@ PROJECT_NAME="$(basename "$PROJECT_DIR")"
 VENV_DIR="${VENV_DIR:-$HOME/venv/$PROJECT_NAME}"
 
 # kubectl is commonly installed in a user-local bin directory in containers.
-export PATH="$HOME/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 
 if [[ -f "$PROJECT_DIR/.env" ]]; then
     set -a
