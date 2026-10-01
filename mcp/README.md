@@ -75,20 +75,15 @@ Pour les autres clients, ajouter le serveur à leur configuration MCP :
 ### 3. Déployer les ressources K8s
 
 ```bash
-KUBE_NAMESPACE="<namespace>" ../docker-build-setup.sh
-```
-
-Le script déploie le chart Helm. Pour publier la registry avec un certificat
-cert-manager, fournir simultanément `TLS_HOST` et
-`CERT_MANAGER_CLUSTER_ISSUER` (nom d'un
-`ClusterIssuer`) :
-
-```bash
 KUBE_NAMESPACE="<namespace>" \
 TLS_HOST="registry.example.com" \
 CERT_MANAGER_CLUSTER_ISSUER="letsencrypt-production" \
 ../docker-build-setup.sh
 ```
+
+Le script déploie le chart Helm et publie obligatoirement la registry en TLS.
+`TLS_HOST` et `CERT_MANAGER_CLUSTER_ISSUER` (nom d'un `ClusterIssuer`) sont tous
+les deux requis.
 
 ### 4. Redémarrer l'agent
 
@@ -277,6 +272,6 @@ Utiliser docker_run avec:
 | `docker-build-mcp-server.py` | Serveur MCP principal |
 | `README.md` | Ce fichier |
 | `../docker-build.sh` | Script build one-command (usine) |
-| `../chart/` | Chart Helm de l'usine et Ingress TLS optionnel |
+| `../chart/` | Chart Helm de l'usine et Ingress TLS obligatoire |
 | `../docker-build-pod.yaml` | Manifest pod K8s historique |
 | `../registry.yaml` | Manifest registry K8s historique |

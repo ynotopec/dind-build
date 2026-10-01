@@ -23,6 +23,9 @@ hôtes NVIDIA H100 et DGX Spark.
 cp .env.example .env
 # Renseigner KUBE_NAMESPACE dans .env (le token HTTP peut être généré par install.sh)
 ./install.sh
+KUBE_NAMESPACE="<namespace>" \
+TLS_HOST="registry.example.com" \
+CERT_MANAGER_CLUSTER_ISSUER="letsencrypt-production" \
 ./docker-build-setup.sh
 ./run.sh                         # IP 127.0.0.1, port libre
 # ou : ./run.sh 0.0.0.0 8000
@@ -34,10 +37,9 @@ L'installation refuse de continuer tant que le namespace explicite n'est pas
 renseigné.
 
 Le déploiement Kubernetes est fourni sous forme de chart Helm dans `chart/`.
-La registry reste uniquement accessible dans le cluster par défaut. Pour
-l'exposer en HTTPS via un Ingress et cert-manager, renseigner ensemble le nom
-DNS et le `ClusterIssuer` (le contrôleur Ingress, cert-manager et le DNS doivent
-déjà être configurés) :
+L'exposition HTTPS de la registry via un Ingress est obligatoire. Le nom DNS et
+le `ClusterIssuer` doivent être renseignés à chaque déploiement ; le contrôleur
+Ingress, cert-manager et le DNS doivent déjà être configurés :
 
 ```bash
 KUBE_NAMESPACE="<namespace>" \
