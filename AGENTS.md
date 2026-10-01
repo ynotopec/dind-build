@@ -8,3 +8,4 @@
 - Keep HTTP endpoints authenticated and bound to loopback by default.
 - Maintain compatibility with Linux on both `x86_64` and `aarch64` (including NVIDIA H100 hosts and DGX Spark).
 - Run unit tests and shell syntax checks before committing.
+- Keep Hermes MCP configuration upgrades idempotent and preserve unrelated user configuration.

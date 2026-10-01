@@ -31,7 +31,17 @@ Le script utilise `uv` et crée le venv dans `~/venv/<nom-du-projet>`.
 
 ### 2. Configurer l'agent
 
-Ajouter le serveur à la configuration standard du client MCP :
+Pour Hermes Agent, l'installation détecte et met à jour automatiquement
+`~/.hermes/config.yaml`. Si nécessaire, forcer cette étape avec :
+
+```bash
+./install.sh --hermes
+```
+
+La configuration ajoutée utilise `stdio.sh`, qui charge `.env` avant chaque
+démarrage. Une nouvelle session retrouve ainsi le même `KUBE_NAMESPACE`.
+
+Pour les autres clients, ajouter le serveur à leur configuration MCP :
 
 ```json
 {

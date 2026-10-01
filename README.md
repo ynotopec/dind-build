@@ -40,10 +40,28 @@ systemctl --user enable --now docker-build-mcp.service
 Le nom de l'unité reprend le nom du répertoire du projet. Si le dépôt a été
 renommé, utiliser `<nom-du-répertoire>-mcp.service`.
 
+## Hermes Agent
+
+Dans un conteneur Hermes, `install.sh` détecte `~/.hermes` et ajoute de manière
+idempotente le serveur stdio `docker-build` à `~/.hermes/config.yaml`. Le
+wrapper `stdio.sh` recharge `.env` à chaque démarrage, donc le namespace reste
+disponible dans les nouvelles sessions.
+
+Si le répertoire Hermes n'existe pas encore, forcer la configuration puis
+redémarrer Hermes ou ouvrir une nouvelle session :
+
+```bash
+./install.sh --hermes
+```
+
+Utiliser `./install.sh --no-hermes` pour désactiver cette intégration. Le mode
+stdio n'expose aucun port ; `MCP_API_TOKEN` protège uniquement l'API HTTP.
+
 ## Commandes
 
 ```bash
 ./run.sh [IP] [PORT]             # PORT omis : sélection automatique d'un port libre
+./stdio.sh                       # transport stdio pour un client MCP local
 ./install.sh                     # installation ou mise à niveau idempotente
 ./uninstall.sh                   # retire le venv et l'unité, conserve .env
 ```
