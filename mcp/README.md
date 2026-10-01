@@ -1,18 +1,18 @@
 # MCP — Docker Build Factory
 
-Interface simple pour builder/push/pull des images Docker via un pod Kubernetes DinD.
+Interface simple pour builder/push/pull des images Docker via un pod Kubernetes Docker Build (Docker-in-Docker).
 
 ## Ce que ça fait
 
 | Outil | Action |
 |-------|--------|
-| `mcp_dind_build` | Construire une image Docker |
-| `mcp_dind_push` | Push vers la registry K8s |
-| `mcp_dind_pull` | Pull depuis la registry |
-| `mcp_dind_run` | Lancer un container |
-| `mcp_dind_list_images` | Voir les images locales |
-| `mcp_dind_list_registry` | Voir les images registry |
-| `mcp_dind_cleanup` | Nettoyer les images inutilisées |
+| `mcp_docker_build` | Construire une image Docker |
+| `mcp_docker_push` | Push vers la registry K8s |
+| `mcp_docker_pull` | Pull depuis la registry |
+| `mcp_docker_run` | Lancer un container |
+| `mcp_docker_list_images` | Voir les images locales |
+| `mcp_docker_list_registry` | Voir les images registry |
+| `mcp_docker_cleanup` | Nettoyer les images inutilisées |
 
 ## Pour utiliser les outils
 
@@ -28,17 +28,17 @@ Ajouter dans `config.yaml` :
 
 ```yaml
 mcp_servers:
-  dind-build:
+  docker-build:
     command: python3
-    args: ["/path/to/dind-build/mcp/dind-mcp-server.py"]
+    args: ["/path/to/docker-build/mcp/docker-build-mcp-server.py"]
     timeout: 300
 ```
 
 ### 3. Déployer les ressources K8s
 
 ```bash
-# Pod DinD (builder Docker dans K8s)
-kubectl apply -f ../dind-pod.yaml
+# Pod Docker Build (builder Docker dans K8s)
+kubectl apply -f ../docker-build-pod.yaml
 
 # Registry locale (push/pull entre pods)
 kubectl apply -f ../registry.yaml
@@ -49,18 +49,18 @@ kubectl apply -f ../registry.yaml
 Les outils sont découverts automatiquement :
 
 ```
-mcp_dind_build
-mcp_dind_push
-mcp_dind_pull
-mcp_dind_run
-mcp_dind_list_images
-mcp_dind_list_registry
-mcp_dind_cleanup
+mcp_docker_build
+mcp_docker_push
+mcp_docker_pull
+mcp_docker_run
+mcp_docker_list_images
+mcp_docker_list_registry
+mcp_docker_cleanup
 ```
 
 ## Changement de session : pourquoi les outils peuvent disparaître
 
-L'installation du pod DinD et l'exposition de ses outils à l'agent sont deux
+L'installation du pod Docker Build et l'exposition de ses outils à l'agent sont deux
 choses distinctes. Le pod peut être parfaitement fonctionnel alors qu'une
 nouvelle session ne charge pas le serveur MCP. Chaque session redécouvre ses
 outils au démarrage à partir de **sa propre configuration** et de
@@ -94,9 +94,9 @@ l'agent :
 
 ```yaml
 mcp_servers:
-  dind-build:
+  docker-build:
     command: /chemin/absolu/vers/python3
-    args: ["/chemin/absolu/vers/dind-build/mcp/dind-mcp-server.py"]
+    args: ["/chemin/absolu/vers/docker-build/mcp/docker-build-mcp-server.py"]
     timeout: 300
 ```
 
@@ -114,27 +114,27 @@ Exécuter les commandes suivantes **dans le même environnement que l'agent** :
 
 # 2. La session vise-t-elle le bon cluster et le bon namespace ?
 kubectl config current-context
-kubectl -n "${KUBE_NAMESPACE:-demo1}" get pod dind-build
+kubectl -n "${KUBE_NAMESPACE:-demo1}" get pod docker-build
 
 # 3. Le daemon Docker du pod répond-il ?
-kubectl -n "${KUBE_NAMESPACE:-demo1}" exec dind-build -- docker info
+kubectl -n "${KUBE_NAMESPACE:-demo1}" exec docker-build -- docker info
 
 # 4. Les images sont-elles encore dans ce pod ?
-kubectl -n "${KUBE_NAMESPACE:-demo1}" exec dind-build -- docker images
+kubectl -n "${KUBE_NAMESPACE:-demo1}" exec docker-build -- docker images
 ```
 
 Interprétation :
 
-- outil `mcp_dind_build` absent : problème de configuration/découverte MCP ;
+- outil `mcp_docker_build` absent : problème de configuration/découverte MCP ;
 - outil présent mais erreur `pod not found` : mauvais contexte ou namespace ;
-- pod présent mais `docker info` échoue : problème du daemon DinD ;
+- pod présent mais `docker info` échoue : problème du daemon Docker ;
 - `docker info` réussit mais l'image manque : le pod a probablement été
   recréé, ou l'image avait été construite dans un autre contexte Kubernetes.
 
 ### Transport HTTP
 
 ```bash
-python3 dind-mcp-server.py --http --port 8080
+python3 docker-build-mcp-server.py --http --port 8080
 ```
 
 Le serveur HTTP écoute uniquement sur `127.0.0.1` par défaut, car ses outils
@@ -147,7 +147,7 @@ exposer directement ce port sur un réseau non fiable.
 ### Builder une image
 
 ```
-Utiliser mcp_dind_build avec:
+Utiliser mcp_docker_build avec:
   - image_name: "mon-app:latest"
   - dockerfile_content: |
       FROM alpine:3.19
@@ -158,7 +158,7 @@ Utiliser mcp_dind_build avec:
 ### Push vers registry
 
 ```
-Utiliser mcp_dind_push avec:
+Utiliser mcp_docker_push avec:
   - image_name: "mon-app:latest"
   - registry_url: "registry:5000"  # par défaut
 ```
@@ -166,14 +166,14 @@ Utiliser mcp_dind_push avec:
 ### Pull depuis registry
 
 ```
-Utiliser mcp_dind_pull avec:
+Utiliser mcp_docker_pull avec:
   - image_name: "mon-app:latest"
 ```
 
 ### Lancer un container
 
 ```
-Utiliser mcp_dind_run avec:
+Utiliser mcp_docker_run avec:
   - image_name_with_registry: "registry:5000/mon-app:latest"
   - command: "echo 'custom command'"  # optionnel
 ```
@@ -181,13 +181,13 @@ Utiliser mcp_dind_run avec:
 ## Architecture
 
 ```
-[Agent] → MCP Server (stdio) → K8s DinD Pod → Docker
+[Agent] → MCP Server (stdio) → K8s Docker Build Pod → Docker
                                ↓
                           Registry :5000
 ```
 
 - **MCP Server** : processus local (python3)
-- **DinD Pod** : pod K8s avec daemon Docker
+- **Docker Build Pod** : pod K8s avec daemon Docker
 - **Registry** : registry locale sur port 5000
 - **kubectl** : accès au cluster K8s requis
 
@@ -196,7 +196,7 @@ Utiliser mcp_dind_run avec:
 | Problème | Solution |
 |----------|----------|
 | Pod non trouvé | Vérifier `kubectl get pods` dans le namespace |
-| dockerd ne démarre pas | Vérifier les logs `kubectl logs dind-build` |
+| dockerd ne démarre pas | Vérifier les logs `kubectl logs docker-build` |
 | Push échoue | Vérifier `insecure-registry` dans le pod |
 | Outils non visibles | Redémarrer l'agent après ajout dans config.yaml |
 | Outils absents dans une nouvelle session | Vérifier le profil/configuration chargé et utiliser des chemins absolus |
@@ -207,8 +207,8 @@ Utiliser mcp_dind_run avec:
 
 | Fichier | Rôle |
 |---------|------|
-| `dind-mcp-server.py` | Serveur MCP principal |
+| `docker-build-mcp-server.py` | Serveur MCP principal |
 | `README.md` | Ce fichier |
-| `../dind-build.sh` | Script build one-command (usine) |
-| `../dind-pod.yaml` | Manifest pod K8s (usine) |
+| `../docker-build.sh` | Script build one-command (usine) |
+| `../docker-build-pod.yaml` | Manifest pod K8s (usine) |
 | `../registry.yaml` | Manifest registry K8s (usine) |
