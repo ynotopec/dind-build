@@ -28,6 +28,9 @@ kubectl -n demo1 exec dind-build -- docker info | head -5
 ./dind-build.sh mon-image:tag /chemin/vers/le-projet
 ```
 
+`Dockerfile.example` est une image de test minimale ; copiez-la sous le nom
+`Dockerfile` dans un répertoire temporaire pour valider l'installation.
+
 ### 4. Pousser vers un registry
 
 ```bash

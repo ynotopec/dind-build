@@ -16,10 +16,11 @@ K8s config:
 import argparse
 import asyncio
 import base64
+import logging
 import os
+import re
 import shlex
 import subprocess
-import sys
 import time
 import uuid
 
@@ -30,6 +31,20 @@ from mcp.server.fastmcp import FastMCP
 NS = os.environ.get("KUBE_NAMESPACE", os.environ.get("DIND_NAMESPACE", "demo1"))
 POD = "dind-build"
 REGISTRY = "registry:5000"
+DOCKER_INFO_ATTEMPTS = 5
+DOCKER_INFO_TIMEOUT_SECONDS = 5
+IMAGE_NAME_PATTERN = re.compile(
+    r"^(?=.{1,255}$)"
+    r"(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)*"
+    r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$"
+)
+
+logging.basicConfig(
+    level=os.environ.get("DIND_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s level=%(levelname)s logger=%(name)s message=%(message)s",
+)
+LOGGER = logging.getLogger("dind-build")
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -42,10 +57,21 @@ def run_kubectl(args: list[str], timeout: int = 120) -> str:
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"kubectl timed out after {timeout} seconds") from exc
-    output = result.stdout.strip() or result.stderr.strip()
     if result.returncode:
-        raise RuntimeError(f"kubectl exited with status {result.returncode}: {output or '(no output)'}")
-    return output
+        error = result.stderr.strip() or result.stdout.strip() or "(no output)"
+        LOGGER.error("kubectl failed status=%d error=%s", result.returncode, error)
+        raise RuntimeError(f"kubectl exited with status {result.returncode}: {error}")
+    return result.stdout.strip()
+
+
+def validate_image_name(image_name: str) -> str:
+    """Validate a Docker tag accepted by the tools before invoking Docker."""
+    if not IMAGE_NAME_PATTERN.fullmatch(image_name):
+        raise ValueError(
+            "Invalid image name; use lowercase repository components and an "
+            "optional Docker tag (for example, registry:5000/team/app:v1)"
+        )
+    return image_name
 
 
 def ensure_pod() -> bool:
@@ -60,13 +86,17 @@ def ensure_pod() -> bool:
 
 
 def ensure_dockerd():
-    """Wait briefly for the pod-managed daemon without restarting it."""
-    for _ in range(5):
+    """Try bounded Docker checks without restarting the pod-managed daemon."""
+    for attempt in range(1, DOCKER_INFO_ATTEMPTS + 1):
         try:
-            run_kubectl(["exec", POD, "--", "docker", "info"], timeout=15)
+            run_kubectl(
+                ["exec", POD, "--", "docker", "info"],
+                timeout=DOCKER_INFO_TIMEOUT_SECONDS,
+            )
             return
         except RuntimeError:
-            time.sleep(1)
+            if attempt < DOCKER_INFO_ATTEMPTS:
+                time.sleep(1)
     raise RuntimeError("Docker daemon is unavailable; inspect the DinD pod logs")
 
 
@@ -74,6 +104,7 @@ def ensure_dockerd():
 
 def _dind_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]") -> str:
     """Build a Docker image inside the K8s DinD pod."""
+    validate_image_name(image_name)
     if not ensure_pod():
         raise RuntimeError("DinD pod not running. Deploy: kubectl apply -f dind-pod.yaml")
     ensure_dockerd()
@@ -225,24 +256,27 @@ def create_server(**settings) -> FastMCP:
 async def run_stdio():
     server = create_server()
 
-    print("DinD Build Factory MCP Server (stdio)", file=sys.stderr)
-    print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
+    LOGGER.info("transport=stdio namespace=%s tools=%s", NS, ",".join(TOOL_NAMES))
     await server.run_stdio_async()
 
 
 # ── HTTP (Open WebUI — Streamable HTTP, stateless mode) ────────────────────
 
-async def run_http(port: int = 8080):
+async def run_http(host: str = "127.0.0.1", port: int = 8080):
     server = create_server(
-        host="0.0.0.0",
+        host=host,
         port=port,
         streamable_http_path="/mcp",
         stateless_http=True,
     )
 
-    print("DinD Build Factory MCP Server (HTTP — stateless)", file=sys.stderr)
-    print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
-    print(f"URL: http://0.0.0.0:{port}/mcp", file=sys.stderr)
+    LOGGER.info(
+        "transport=http mode=stateless namespace=%s tools=%s url=http://%s:%d/mcp",
+        NS,
+        ",".join(TOOL_NAMES),
+        host,
+        port,
+    )
     await server.run_streamable_http_async()
 
 
@@ -251,11 +285,16 @@ async def run_http(port: int = 8080):
 async def main():
     parser = argparse.ArgumentParser(description="DinD Build Factory MCP Server")
     parser.add_argument("--http", action="store_true", help="Run HTTP mode (for Open WebUI)")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="HTTP bind address (default: 127.0.0.1; use an authenticated proxy for remote access)",
+    )
     parser.add_argument("--port", type=int, default=8080, help="HTTP port (default: 8080)")
     args = parser.parse_args()
 
     if args.http:
-        await run_http(args.port)
+        await run_http(args.host, args.port)
     else:
         await run_stdio()
 
@@ -264,4 +303,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Server stopped.")
+        LOGGER.info("server stopped")
