@@ -19,6 +19,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import subprocess
 import time
 import uuid
@@ -31,6 +32,45 @@ from mcp.server.auth.settings import AuthSettings
 os.environ["PATH"] = f"{os.path.expanduser('~')}/bin:{os.environ.get('PATH', '')}"
 
 # ── K8s config ──────────────────────────────────────────────────────────────
+
+# Load .env from the repository root (the script's parent directory) when the
+# launcher does not source it itself. Existing environment variables always win.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+try:
+    with open(os.path.join(_REPO_ROOT, ".env")) as _fh:
+        for _line in _fh:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _key, _val = _line.split("=", 1)
+            _key = _key.strip().lstrip("export ")
+            _val = _val.strip().strip('"').strip("'")
+            os.environ.setdefault(_key, _val)
+except OSError:
+    pass
+
+# Look for kubectl in the usual user-local install locations; container images
+# frequently install it outside the inherited PATH of the MCP client process.
+KUBECTL_CANDIDATE_DIRS = [
+    os.path.expanduser("~/.local/bin"),
+    os.path.expanduser("~/bin"),
+    "/usr/local/bin",
+    "/usr/bin",
+    "/opt/homebrew/bin",
+]
+
+
+def find_kubectl() -> str:
+    """Resolve the kubectl binary path, falling back to common install dirs."""
+    found = shutil.which("kubectl")
+    if found:
+        return found
+    for directory in KUBECTL_CANDIDATE_DIRS:
+        candidate = os.path.join(directory, "kubectl")
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return "kubectl"
+
 
 NS = os.environ.get("KUBE_NAMESPACE")
 POD = "docker-build"
@@ -68,7 +108,7 @@ class StaticTokenVerifier:
 def run_kubectl(args: list[str], timeout: int = 120) -> str:
     if not NS:
         raise RuntimeError("KUBE_NAMESPACE must be set")
-    cmd = ["kubectl", "-n", NS] + args
+    cmd = [find_kubectl(), "-n", NS] + args
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, check=False

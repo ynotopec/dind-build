@@ -44,7 +44,7 @@ class KubectlTests(unittest.TestCase):
 
         self.assertEqual(result, "ready")
         run.assert_called_once_with(
-            ["kubectl", "-n", SERVER.NS, "get", "pod", "docker-build"],
+            [SERVER.find_kubectl(), "-n", SERVER.NS, "get", "pod", "docker-build"],
             capture_output=True,
             text=True,
             timeout=9,
@@ -58,6 +58,46 @@ class KubectlTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "timed out after 3 seconds"):
             SERVER.run_kubectl(["get", "pod", "docker-build"], timeout=3)
+
+
+class FindKubectlTests(unittest.TestCase):
+    def test_find_kubectl_prefers_path_lookup(self):
+        with patch.object(SERVER.shutil, "which", return_value="/usr/bin/kubectl"):
+            self.assertEqual(SERVER.find_kubectl(), "/usr/bin/kubectl")
+
+    def test_find_kubectl_falls_back_to_candidate_dirs(self):
+        with patch.object(SERVER.shutil, "which", return_value=None):
+            with patch.object(SERVER.os.path, "isfile", return_value=False), \
+                 patch.object(SERVER.os, "access", return_value=False):
+                # No candidate exists: return the bare command so subprocess
+                # raises the usual FileNotFoundError.
+                self.assertEqual(SERVER.find_kubectl(), "kubectl")
+
+    def test_run_kubectl_resolves_kubectl_path(self):
+        with patch.object(SERVER, "find_kubectl", return_value="/opt/kubectl"), \
+             patch.object(SERVER, "NS", "test-namespace"), \
+             patch.object(SERVER.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, "ok", "")
+            SERVER.run_kubectl(["get", "pods"])
+            self.assertEqual(run.call_args.args[0][0], "/opt/kubectl")
+
+
+class EnvFileTests(unittest.TestCase):
+    def test_env_file_is_loaded_from_repo_root(self):
+        env_path = Path(SERVER.__file__).parents[1] / ".env"
+        if not env_path.exists():
+            self.skipTest("no .env file present")
+        # If KUBE_NAMESPACE exists in .env, the module must have picked it up
+        # (setdefault semantics: pre-existing env vars win).
+        import os as _os
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, val = line.split("=", 1)
+                key = key.strip().lstrip("export ")
+                val = val.strip().strip('"').strip("'")
+                expected = _os.environ.get(key, val)
+                self.assertEqual(SERVER.os.environ.get(key), expected)
 
 
 class ReadinessTests(unittest.TestCase):
