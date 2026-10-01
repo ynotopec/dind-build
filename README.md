@@ -1,63 +1,80 @@
-# Docker Build — Docker-in-Docker sur Kubernetes
+# Docker Build MCP
 
-Construire des images Docker depuis un cluster K8s via un pod Docker Build (Docker-in-Docker).
+Serveur MCP **Streamable HTTP** pour construire et gérer des images Docker dans
+Kubernetes. L'API est protégée par un bearer token et ne choisit jamais de
+namespace implicitement.
 
-## Déploiement
+## Démarrage minimal
 
-```bash
-kubectl apply -f docker-build-pod.yaml
-```
-
-## Utilisation
-
-### 1. Attendre que le daemon Docker soit prêt
+Prérequis : Linux, `kubectl`, un cluster Kubernetes accessible et
+[`uv`](https://docs.astral.sh/uv/). Les scripts sont compatibles `x86_64` et
+`aarch64`, notamment avec les hôtes NVIDIA H100 et DGX Spark.
 
 ```bash
-kubectl -n demo1 wait pod/docker-build --for=condition=ready --timeout=60s
+cp .env.example .env
+# Renseigner KUBE_NAMESPACE dans .env (le token HTTP peut être généré par install.sh)
+./install.sh
+./docker-build-setup.sh
+./run.sh                         # IP 127.0.0.1, port libre
+# ou : ./run.sh 0.0.0.0 8000
 ```
 
-### 2. Vérifier
+L'environnement Python est installé dans `~/venv/<nom-du-projet>`. Relancer
+`./install.sh` met à niveau une installation existante sans modifier `.env`.
+L'installation refuse de continuer tant que le namespace explicite n'est pas
+renseigné.
+
+Endpoint : `http://<IP>:<PORT>/mcp`
+
+Le client doit envoyer :
+
+```http
+Authorization: Bearer <MCP_API_TOKEN>
+```
+
+Pour utiliser un port stable et le service utilisateur :
 
 ```bash
-kubectl -n demo1 exec docker-build -- docker info | head -5
+# Définir MCP_PORT dans .env, relancer ./install.sh, puis vérifier :
+systemctl --user status docker-build-mcp.service
 ```
 
-### 3. Construire
+Le nom de l'unité reprend le nom du répertoire du projet. Si le dépôt a été
+renommé, utiliser `<nom-du-répertoire>-mcp.service`.
+
+## Hermes Agent
+
+Dans un conteneur Hermes, `install.sh` détecte `~/.hermes` et ajoute de manière
+idempotente le serveur stdio `docker-build` à `~/.hermes/config.yaml`. Le
+wrapper `stdio.sh` recharge `.env` à chaque démarrage, donc le namespace reste
+disponible dans les nouvelles sessions.
+
+Si le répertoire Hermes n'existe pas encore, forcer la configuration puis
+redémarrer Hermes ou ouvrir une nouvelle session :
 
 ```bash
-./docker-build.sh mon-image:tag /chemin/vers/le-projet
+./install.sh --hermes
 ```
 
-`Dockerfile.example` est une image de test minimale ; copiez-la sous le nom
-`Dockerfile` dans un répertoire temporaire pour valider l'installation.
+Utiliser `./install.sh --no-hermes` pour désactiver cette intégration. Le mode
+stdio n'expose aucun port ; `MCP_API_TOKEN` protège uniquement l'API HTTP.
 
-### 4. Pousser vers un registry
+La configuration et le dépôt doivent se trouver sur un volume persistant pour
+survivre à la recréation complète du conteneur. Un redémarrage simple est pris
+en charge par le cycle de vie Hermes. Sur un Linux classique, l'installateur
+active directement l'unité `systemd --user` et tente d'activer le *linger* afin
+que le service reparte au boot même sans session interactive.
+
+## Commandes
 
 ```bash
-printf '%s' "$TOKEN" | kubectl -n demo1 exec -i docker-build -- docker login ghcr.io -u X_ACCESS_TOKEN --password-stdin
-kubectl -n demo1 exec docker-build -- docker tag mon-image:tag ghcr.io/<ORG>/mon-image:tag
-kubectl -n demo1 exec docker-build -- docker push ghcr.io/<ORG>/mon-image:tag
+./run.sh [IP] [PORT]             # PORT omis : sélection automatique d'un port libre
+./stdio.sh                       # transport stdio pour un client MCP local
+./install.sh                     # installation ou mise à niveau idempotente
+./uninstall.sh                   # retire le venv et l'unité, conserve .env
 ```
 
-### 5. Nettoyage
-
-```bash
-kubectl -n demo1 exec docker-build -- docker system prune -f
-```
-
-## Nettoyage
-
-```bash
-kubectl delete -f docker-build-pod.yaml
-```
-
-## Important
-
-- Les images construites vivent **dans le pod uniquement** → il faut les push avant de détruire le pod.
-- Une session d'agent ne transporte ni sa découverte des outils MCP, ni son
-  environnement (`PATH`, `KUBECONFIG`, namespace) vers une autre session. Si
-  les outils disparaissent après un changement de session, consulter le
-  [diagnostic de session MCP](mcp/README.md#changement-de-session--pourquoi-les-outils-peuvent-disparaître).
-- Le pod a besoin d'être `privileged` et d'avoir PSA non `restricted` sur le namespace.
-- Stockage limité à 5 Go via `emptyDir.sizeLimit`.
-- Les couches Docker sont conservées entre les builds pour accélérer les builds répétés. Pour nettoyer avant un build : `DOCKER_BUILD_PRUNE_BEFORE_BUILD=true ./docker-build.sh ...`.
+Les sept outils MCP exposés sont `docker_build`, `docker_push`, `docker_pull`,
+`docker_run`, `docker_list_images`, `docker_list_registry` et `docker_cleanup`.
+La configuration détaillée est disponible dans [SETUP.md](SETUP.md) et
+[mcp/README.md](mcp/README.md).

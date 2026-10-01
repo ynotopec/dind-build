@@ -2,15 +2,13 @@
 """
 Docker Build Factory MCP Server — dual transport.
 
-  Stdio   → for Hermes Agent (python3 docker-build-mcp-server.py)
-  HTTP    → for Open WebUI (python3 docker-build-mcp-server.py --http [--port 8080])
+  Stdio   → for MCP clients (python3 docker-build-mcp-server.py)
+  HTTP    → for HTTP MCP clients (python3 docker-build-mcp-server.py --http [--port 8000])
 
-Open WebUI configuration:
-  Admin Settings → Integrations → + Add Server → Type: MCP (Streamable HTTP)
-  Server URL: http://<server>:<port>/mcp
+Streamable HTTP endpoint: http://<server>:<port>/mcp
 
 K8s config:
-  export KUBE_NAMESPACE=demo1   # default: demo1
+  export KUBE_NAMESPACE="<namespace>"
 """
 
 import argparse
@@ -19,16 +17,19 @@ import base64
 import logging
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import time
 import uuid
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 
 # ── K8s config ──────────────────────────────────────────────────────────────
 
-NS = os.environ.get("KUBE_NAMESPACE", os.environ.get("DOCKER_BUILD_NAMESPACE", "demo1"))
+NS = os.environ.get("KUBE_NAMESPACE")
 POD = "docker-build"
 REGISTRY = "registry:5000"
 DOCKER_INFO_ATTEMPTS = 5
@@ -47,9 +48,23 @@ logging.basicConfig(
 LOGGER = logging.getLogger("docker-build")
 
 
+class StaticTokenVerifier:
+    """Verify the single bearer token configured for this private MCP API."""
+
+    def __init__(self, token: str):
+        self.token = token
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not secrets.compare_digest(token, self.token):
+            return None
+        return AccessToken(token=token, client_id="mcp-client", scopes=[])
+
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def run_kubectl(args: list[str], timeout: int = 120) -> str:
+    if not NS:
+        raise RuntimeError("KUBE_NAMESPACE must be set")
     cmd = ["kubectl", "-n", NS] + args
     try:
         result = subprocess.run(
@@ -256,7 +271,7 @@ def create_server(**settings) -> FastMCP:
     return server
 
 
-# ── Stdio (Hermes Agent) ────────────────────────────────────────────────────
+# ── Stdio transport ────────────────────────────────────────────────────
 
 async def run_stdio():
     server = create_server()
@@ -265,14 +280,23 @@ async def run_stdio():
     await server.run_stdio_async()
 
 
-# ── HTTP (Open WebUI — Streamable HTTP, stateless mode) ────────────────────
+# ── HTTP (Streamable HTTP, stateless mode) ────────────────────
 
-async def run_http(host: str = "127.0.0.1", port: int = 8080):
+async def run_http(host: str = "127.0.0.1", port: int = 8000):
+    api_token = os.environ.get("MCP_API_TOKEN")
+    if not api_token:
+        raise RuntimeError("MCP_API_TOKEN must be set for HTTP transport")
+    public_url = os.environ.get("MCP_PUBLIC_URL", f"http://127.0.0.1:{port}").rstrip("/")
     server = create_server(
         host=host,
         port=port,
         streamable_http_path="/mcp",
         stateless_http=True,
+        token_verifier=StaticTokenVerifier(api_token),
+        auth=AuthSettings(
+            issuer_url=public_url,
+            resource_server_url=f"{public_url}/mcp",
+        ),
     )
 
     LOGGER.info(
@@ -289,13 +313,13 @@ async def run_http(host: str = "127.0.0.1", port: int = 8080):
 
 async def main():
     parser = argparse.ArgumentParser(description="Docker Build Factory MCP Server")
-    parser.add_argument("--http", action="store_true", help="Run HTTP mode (for Open WebUI)")
+    parser.add_argument("--http", action="store_true", help="Run in HTTP mode")
     parser.add_argument(
         "--host",
         default="127.0.0.1",
         help="HTTP bind address (default: 127.0.0.1; use an authenticated proxy for remote access)",
     )
-    parser.add_argument("--port", type=int, default=8080, help="HTTP port (default: 8080)")
+    parser.add_argument("--port", type=int, default=8000, help="HTTP port (default: 8000)")
     args = parser.parse_args()
 
     if args.http:

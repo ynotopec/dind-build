@@ -9,3 +9,12 @@ dind-build-tmp/
 # Logs
 *.log
 /tmp/dind-mcp.log
+
+# Local configuration and environments
+.env
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/

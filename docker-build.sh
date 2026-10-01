@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NS="${DOCKER_BUILD_NAMESPACE:-demo1}"
+NS="${KUBE_NAMESPACE:?KUBE_NAMESPACE must be set}"
 POD_NAME="docker-build"
 REGISTRY_HOST="registry:5000"
 

@@ -15,7 +15,7 @@ L'usine de build Docker K8s est 100% reproductible. Voici la procédure complèt
 Un seul script déploie tout :
 
 ```bash
-./docker-build-setup.sh [namespace]
+KUBE_NAMESPACE="<namespace>" ./docker-build-setup.sh
 ```
 
 Déploie automatiquement :
@@ -27,27 +27,31 @@ Le pod et la registry démarrent en parallèle, puis le script attend leur dispo
 
 ### Côté Client (Agent)
 
-Une ligne dans `config.yaml` + un restart :
+Ajouter le serveur à la configuration standard du client MCP :
 
-```yaml
-mcp_servers:
-  docker-build:
-    command: python3
-    args: ["/path/to/docker-build/mcp/docker-build-mcp-server.py"]
-    timeout: 300
+```json
+{
+  "mcpServers": {
+    "docker-build": {
+      "command": "/home/<user>/venv/<project>/bin/python",
+      "args": ["/path/to/docker-build/mcp/docker-build-mcp-server.py"],
+      "env": {"KUBE_NAMESPACE": "<namespace>"}
+    }
+  }
+}
 ```
 
 ### 7 outils disponibles
 
 | Outil | Action |
 |-------|--------|
-| `mcp_docker_build` | Construire une image Docker |
-| `mcp_docker_push` | Push vers registry K8s |
-| `mcp_docker_pull` | Pull depuis registry |
-| `mcp_docker_run` | Lancer un container |
-| `mcp_docker_list_images` | Voir les images locales |
-| `mcp_docker_list_registry` | Voir les images registry |
-| `mcp_docker_cleanup` | Nettoyer les images inutilisées |
+| `docker_build` | Construire une image Docker |
+| `docker_push` | Push vers registry K8s |
+| `docker_pull` | Pull depuis registry |
+| `docker_run` | Lancer un container |
+| `docker_list_images` | Voir les images locales |
+| `docker_list_registry` | Voir les images registry |
+| `docker_cleanup` | Nettoyer les images inutilisées |
 
 ## Workflow complet
 
@@ -55,16 +59,17 @@ mcp_servers:
 
 ```bash
 # À faire une fois sur chaque cluster cible
-./docker-build-setup.sh demo1
+export KUBE_NAMESPACE="<namespace>"
+./docker-build-setup.sh
 ```
 
 ### 2. Installation client
 
 ```bash
-# Sur chaque machine qui héberge un agent
-python3 -m pip install -r mcp/requirements.txt
+# Sur chaque machine qui héberge un client MCP
+./install.sh
 
-# Ajouter dans config.yaml (voir ci-dessus)
+# Ajouter le serveur à la configuration du client (voir ci-dessus)
 # Redémarrer l'agent
 ```
 
@@ -75,7 +80,7 @@ python3 -m pip install -r mcp/requirements.txt
 ./docker-build.sh myapp:latest ./mon-projet/
 
 # Push (optionnel, si image utile ailleurs)
-kubectl -n demo1 exec docker-build -- docker push registry:5000/myapp:latest
+kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker push registry:5000/myapp:latest
 ```
 
 ## Récapitulatif des fichiers
@@ -98,10 +103,10 @@ kubectl -n demo1 exec docker-build -- docker push registry:5000/myapp:latest
 | Push échoue | Vérifier registry reachable |
 | Outils MCP absents | Redémarrer l'agent |
 
-## Pour reproduire sur un autre environnement
+## Reproduire l’installation
 
-1. Copier les fichiers du repo `ynotopec/docker-build`
-2. Lancer `./docker-build-setup.sh [namespace]`
-3. Configurer le client (`pip install -r mcp/requirements.txt` + `config.yaml`)
+1. Copier les fichiers de ce dépôt
+2. Définir `KUBE_NAMESPACE`, puis lancer `./docker-build-setup.sh`
+3. Lancer `./install.sh`, puis configurer le client MCP
 4. Redémarrer l'agent
 5. Build !
