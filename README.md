@@ -10,11 +10,14 @@ Prérequis d'installation **et d'exécution** : Linux, `kubectl`,
 [`uv`](https://docs.astral.sh/uv/) et un namespace Kubernetes existant auquel
 `kubectl` a accès. Le namespace doit être créé au préalable par un
 administrateur : aucun droit de création ou autre droit global au cluster
-n'est requis. `kubectl` doit rester installé et configuré dans l'environnement
-qui exécute le serveur MCP, car celui-ci l'utilise à chaque appel d'outil. En
-mode stdio, il s'agit de l'environnement du client MCP ; en mode HTTP, seul
-l'hôte du serveur MCP en a besoin. Les scripts sont compatibles `x86_64` et
-`aarch64`, notamment avec les hôtes NVIDIA H100 et DGX Spark.
+n'est requis. L'installation de `kubectl` est **permanente** : ce n'est pas une
+dépendance temporaire du script d'installation et il ne faut pas le désinstaller
+après le déploiement. Le binaire ainsi que sa configuration d'accès au namespace
+doivent rester disponibles dans l'environnement qui exécute le serveur MCP, car
+celui-ci l'utilise à chaque appel d'outil. En mode stdio, il s'agit de
+l'environnement du client MCP ; en mode HTTP, seul l'hôte du serveur MCP en a
+besoin. Les scripts sont compatibles `x86_64` et `aarch64`, notamment avec les
+hôtes NVIDIA H100 et DGX Spark.
 
 ```bash
 cp .env.example .env

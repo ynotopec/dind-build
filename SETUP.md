@@ -29,11 +29,11 @@ Le pod et la registry démarrent en parallèle, puis le script attend leur dispo
 ### Côté Client (Agent)
 
 En mode stdio, le client lance le serveur MCP localement. Sa machine doit donc
-disposer de `kubectl` pendant toute l'utilisation, avec un contexte Kubernetes
-fonctionnel et l'accès au namespace indiqué par `KUBE_NAMESPACE`. Il ne s'agit
-pas uniquement d'un prérequis d'installation : chaque outil MCP appelle
-`kubectl`. Avec un serveur MCP distant en mode HTTP, cette dépendance appartient
-à l'hôte du serveur plutôt qu'au client.
+disposer de `kubectl` de façon permanente, avec un contexte Kubernetes
+fonctionnel et l'accès au namespace indiqué par `KUBE_NAMESPACE`. Le binaire et
+sa configuration ne doivent pas être retirés après l'installation : chaque
+outil MCP appelle `kubectl`. Avec un serveur MCP distant en mode HTTP, cette
+dépendance permanente appartient à l'hôte du serveur plutôt qu'au client.
 
 Ajouter le serveur à la configuration standard du client MCP :
 

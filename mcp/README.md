@@ -27,10 +27,11 @@ et ne crée pas de namespace ni de ressource globale au cluster.
 
 `kubectl` n'est pas seulement nécessaire au déploiement initial : le serveur
 MCP l'exécute à chaque appel d'outil pour communiquer avec le pod Docker Build.
-Il doit donc être installé, configuré et avoir accès à ce namespace dans
-l'environnement qui exécute le serveur MCP. En mode stdio, cet environnement
-est celui du client MCP ; en mode HTTP, le client distant n'en a pas besoin,
-mais l'hôte du serveur MCP doit le conserver.
+Son installation est donc permanente et ne doit pas être supprimée après le
+setup. Le binaire, son contexte et ses identifiants d'accès au namespace doivent
+rester disponibles dans l'environnement qui exécute le serveur MCP. En mode
+stdio, cet environnement est celui du client MCP ; en mode HTTP, le client
+distant n'en a pas besoin, mais l'hôte du serveur MCP doit les conserver.
 
 ### 1. Installer le MCP server
 
