@@ -16,6 +16,9 @@ NS="${KUBE_NAMESPACE:?KUBE_NAMESPACE must be set}"
 POD="docker-build"
 REGISTRY="registry:5000"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHART_DIR="$SCRIPT_DIR/chart"
+TLS_HOST="${TLS_HOST:-}"
+CERT_MANAGER_CLUSTER_ISSUER="${CERT_MANAGER_CLUSTER_ISSUER:-}"
 
 kubectl() { command kubectl -n "$NS" "$@"; }
 
@@ -26,6 +29,17 @@ if ! kubectl get pods >/dev/null; then
     exit 1
 fi
 
+if ! command -v helm >/dev/null 2>&1; then
+    echo "Error: helm is required to deploy the Docker Build Factory." >&2
+    exit 1
+fi
+
+if [[ -n "$TLS_HOST" && -z "$CERT_MANAGER_CLUSTER_ISSUER" ]] || \
+   [[ -z "$TLS_HOST" && -n "$CERT_MANAGER_CLUSTER_ISSUER" ]]; then
+    echo "Error: TLS_HOST and CERT_MANAGER_CLUSTER_ISSUER must be set together." >&2
+    exit 2
+fi
+
 echo "═══════════════════════════════════════════════════════"
 echo "  Docker Build Factory — Setup"
 echo "═══════════════════════════════════════════════════════"
@@ -33,20 +47,43 @@ echo ""
 echo "  Namespace:  $NS"
 echo "  Pod:        $POD"
 echo "  Registry:   $REGISTRY"
+if [[ -n "$TLS_HOST" ]]; then
+    echo "  Registry TLS: https://$TLS_HOST (ClusterIssuer: $CERT_MANAGER_CLUSTER_ISSUER)"
+fi
 echo ""
 
-# ── 1. Deploy Docker build pod ──────────────────────────────────────────────────────
+# ── 1. Deploy the Helm release ─────────────────────────────────────────────
 
-echo "→ Deploying Docker build pod..."
-kubectl apply -f "$SCRIPT_DIR/docker-build-pod.yaml"
+echo "→ Deploying Docker build pod and registry with Helm..."
+# Adopt resources created by releases older than the Helm chart. Missing
+# resources are expected on a clean install. These metadata-only operations are
+# safe to repeat and prevent Helm from rejecting the migration.
+for resource in pod/docker-build deployment/registry service/registry; do
+    if kubectl get "$resource" >/dev/null 2>&1; then
+        kubectl label "$resource" app.kubernetes.io/managed-by=Helm --overwrite
+        kubectl annotate "$resource" \
+            meta.helm.sh/release-name=docker-build \
+            "meta.helm.sh/release-namespace=$NS" \
+            --overwrite
+    fi
+done
+helm_args=(
+    upgrade --install docker-build "$CHART_DIR"
+    --namespace "$NS"
+    --wait
+    --timeout 2m
+)
+if [[ -n "$TLS_HOST" ]]; then
+    helm_args+=(
+        --set "ingress.enabled=true"
+        --set-string "ingress.host=$TLS_HOST"
+        --set-string "certManager.clusterIssuer=$CERT_MANAGER_CLUSTER_ISSUER"
+    )
+fi
+helm "${helm_args[@]}"
 
-# ── 2. Deploy K8s registry ─────────────────────────────────────────────────
-
-echo "→ Deploying K8s registry..."
-kubectl apply -f "$SCRIPT_DIR/registry.yaml"
-
-# Applying both resources before waiting lets Kubernetes start them in
-# parallel, reducing cold-start latency.
+# Helm starts both workloads before waiting. Keep explicit checks to provide a
+# stable readiness contract to callers of this script.
 kubectl wait pod/"$POD" --for=condition=ready --timeout=60s
 echo "  ✓ Pod $POD ready."
 kubectl wait deployment/registry --for=condition=Available --timeout=60s

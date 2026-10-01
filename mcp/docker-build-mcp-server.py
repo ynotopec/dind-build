@@ -27,6 +27,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 
+# Preserve the inherited PATH while supporting user-local kubectl installs.
+os.environ["PATH"] = f"{os.path.expanduser('~')}/bin:{os.environ.get('PATH', '')}"
+
 # ── K8s config ──────────────────────────────────────────────────────────────
 
 NS = os.environ.get("KUBE_NAMESPACE")

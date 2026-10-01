@@ -20,11 +20,38 @@ de créer le namespace et ne requiert donc aucun droit global au cluster :
 KUBE_NAMESPACE="<namespace>" ./docker-build-setup.sh
 ```
 
-Déploie automatiquement :
+Le script utilise le chart Helm `chart/` et déploie automatiquement :
 - **Pod Docker Build** : docker daemon à l'intérieur de K8s
 - **Registry K8s** : registry locale sur port 5000
 
 Le pod et la registry démarrent en parallèle, puis le script attend leur disponibilité.
+
+### Registry HTTPS (optionnelle)
+
+Sans configuration supplémentaire, la registry est un `ClusterIP` interne. Une
+exposition TLS peut être activée avec les deux valeurs suivantes :
+
+```bash
+export KUBE_NAMESPACE="<namespace>"
+export TLS_HOST="registry.example.com"
+export CERT_MANAGER_CLUSTER_ISSUER="letsencrypt-production"
+./docker-build-setup.sh
+```
+
+`TLS_HOST` et `CERT_MANAGER_CLUSTER_ISSUER` sont indissociables : le script échoue si une
+seule valeur est fournie. Le chart crée alors un Ingress annoté avec
+`cert-manager.io/cluster-issuer`. Le `ClusterIssuer`, cert-manager, un contrôleur
+Ingress et l'enregistrement DNS doivent exister avant le déploiement. Pour
+personnaliser davantage l'Ingress :
+
+```bash
+helm upgrade --install docker-build ./chart \
+  --namespace "$KUBE_NAMESPACE" \
+  --set ingress.enabled=true \
+  --set-string ingress.host=registry.example.com \
+  --set-string certManager.clusterIssuer=letsencrypt-production \
+  --set-string ingress.className=nginx
+```
 
 ### Côté Client (Agent)
 
@@ -97,8 +124,9 @@ kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker push registry:5000/myap
 |---------|------|
 | `docker-build-setup.sh` | Déploiement complet de l'usine (server) |
 | `docker-build.sh` | Build one-command |
-| `docker-build-pod.yaml` | Manifest pod Docker Build |
-| `registry.yaml` | Manifest registry K8s |
+| `chart/` | Chart Helm (pod, registry et Ingress TLS optionnel) |
+| `docker-build-pod.yaml` | Manifest pod historique utilisé par `docker-build.sh` en secours |
+| `registry.yaml` | Manifest registry historique |
 | `mcp/docker-build-mcp-server.py` | Serveur MCP (7 outils) |
 | `mcp/README.md` | Documentation pour les agents |
 
@@ -108,7 +136,8 @@ kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker push registry:5000/myap
 |----------|----------|
 | Pod non prêt | `kubectl logs docker-build` |
 | dockerd ne démarre pas | Vérifier `--insecure-registry` flag |
-| Push échoue | Vérifier registry reachable |
+| Push interne échoue | Vérifier que `registry:5000` est joignable depuis le pod |
+| Certificat absent | Vérifier le `ClusterIssuer`, cert-manager, l'Ingress et le DNS de `TLS_HOST` |
 | Outils MCP absents | Redémarrer l'agent |
 
 ## Reproduire l’installation
