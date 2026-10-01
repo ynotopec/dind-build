@@ -12,20 +12,28 @@ L'usine de build Docker K8s est 100% reproductible. Voici la procédure complèt
 
 ### Côté Server (K8s)
 
-Un seul script déploie tout :
+Un administrateur doit créer au préalable un namespace dédié et y accorder les
+droits nécessaires à l'identité utilisée par `kubectl`. Le script n'essaie pas
+de créer le namespace et ne requiert donc aucun droit global au cluster :
 
 ```bash
 KUBE_NAMESPACE="<namespace>" ./docker-build-setup.sh
 ```
 
 Déploie automatiquement :
-- **Namespace** : créé automatiquement s'il n'existe pas
 - **Pod Docker Build** : docker daemon à l'intérieur de K8s
 - **Registry K8s** : registry locale sur port 5000
 
 Le pod et la registry démarrent en parallèle, puis le script attend leur disponibilité.
 
 ### Côté Client (Agent)
+
+En mode stdio, le client lance le serveur MCP localement. Sa machine doit donc
+disposer de `kubectl` pendant toute l'utilisation, avec un contexte Kubernetes
+fonctionnel et l'accès au namespace indiqué par `KUBE_NAMESPACE`. Il ne s'agit
+pas uniquement d'un prérequis d'installation : chaque outil MCP appelle
+`kubectl`. Avec un serveur MCP distant en mode HTTP, cette dépendance appartient
+à l'hôte du serveur plutôt qu'au client.
 
 Ajouter le serveur à la configuration standard du client MCP :
 
@@ -58,7 +66,7 @@ Ajouter le serveur à la configuration standard du client MCP :
 ### 1. Déploiement server
 
 ```bash
-# À faire une fois sur chaque cluster cible
+# À faire dans le namespace existant préparé par un administrateur
 export KUBE_NAMESPACE="<namespace>"
 ./docker-build-setup.sh
 ```
@@ -106,7 +114,8 @@ kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker push registry:5000/myap
 ## Reproduire l’installation
 
 1. Copier les fichiers de ce dépôt
-2. Définir `KUBE_NAMESPACE`, puis lancer `./docker-build-setup.sh`
-3. Lancer `./install.sh`, puis configurer le client MCP
-4. Redémarrer l'agent
-5. Build !
+2. Faire créer un namespace dédié et y accorder les droits nécessaires
+3. Définir `KUBE_NAMESPACE`, puis lancer `./docker-build-setup.sh`
+4. Lancer `./install.sh`, puis configurer le client MCP
+5. Redémarrer l'agent
+6. Build !

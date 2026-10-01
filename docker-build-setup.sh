@@ -19,9 +19,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 kubectl() { command kubectl -n "$NS" "$@"; }
 
-# The namespace variable is part of the setup contract, so create it on the
-# first installation on a cluster.
-command kubectl get namespace "$NS" >/dev/null 2>&1 || command kubectl create namespace "$NS"
+# The namespace must be provisioned by an administrator. Keep every operation
+# namespace-scoped so this setup does not require cluster-wide permissions.
+if ! kubectl get pods >/dev/null; then
+    echo "Error: namespace '$NS' must already exist and be accessible." >&2
+    exit 1
+fi
 
 echo "═══════════════════════════════════════════════════════"
 echo "  Docker Build Factory — Setup"

@@ -19,6 +19,19 @@ Interface simple pour builder/push/pull des images Docker via un pod Kubernetes 
 Le namespace n'a aucune valeur implicite : il doit être fourni au serveur avec
 la variable `KUBE_NAMESPACE`.
 
+### Prérequis d'exécution
+
+Un namespace Kubernetes existant doit être fourni par un administrateur et être
+accessible via `kubectl`. Le serveur n'a besoin que des droits dans ce namespace
+et ne crée pas de namespace ni de ressource globale au cluster.
+
+`kubectl` n'est pas seulement nécessaire au déploiement initial : le serveur
+MCP l'exécute à chaque appel d'outil pour communiquer avec le pod Docker Build.
+Il doit donc être installé, configuré et avoir accès à ce namespace dans
+l'environnement qui exécute le serveur MCP. En mode stdio, cet environnement
+est celui du client MCP ; en mode HTTP, le client distant n'en a pas besoin,
+mais l'hôte du serveur MCP doit le conserver.
+
 ### 1. Installer le MCP server
 
 Depuis la racine du dépôt :

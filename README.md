@@ -6,8 +6,14 @@ namespace implicitement.
 
 ## Démarrage minimal
 
-Prérequis : Linux, `kubectl`, un cluster Kubernetes accessible et
-[`uv`](https://docs.astral.sh/uv/). Les scripts sont compatibles `x86_64` et
+Prérequis d'installation **et d'exécution** : Linux, `kubectl`,
+[`uv`](https://docs.astral.sh/uv/) et un namespace Kubernetes existant auquel
+`kubectl` a accès. Le namespace doit être créé au préalable par un
+administrateur : aucun droit de création ou autre droit global au cluster
+n'est requis. `kubectl` doit rester installé et configuré dans l'environnement
+qui exécute le serveur MCP, car celui-ci l'utilise à chaque appel d'outil. En
+mode stdio, il s'agit de l'environnement du client MCP ; en mode HTTP, seul
+l'hôte du serveur MCP en a besoin. Les scripts sont compatibles `x86_64` et
 `aarch64`, notamment avec les hôtes NVIDIA H100 et DGX Spark.
 
 ```bash
