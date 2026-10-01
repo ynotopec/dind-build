@@ -23,6 +23,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 kubectl() { command kubectl -n "$NS" "$@"; }
 
+# The namespace argument is part of the setup contract, so create it on the
+# first installation on a cluster.
+command kubectl get namespace "$NS" >/dev/null 2>&1 || command kubectl create namespace "$NS"
+
 echo "═══════════════════════════════════════════════════════"
 echo "  DinD Build Factory — Setup"
 echo "═══════════════════════════════════════════════════════"
@@ -36,13 +40,16 @@ echo ""
 
 echo "→ Deploying DinD pod..."
 kubectl apply -f "$SCRIPT_DIR/dind-pod.yaml"
-kubectl wait pod/"$POD" --for=condition=ready --timeout=60s
-echo "  ✓ Pod $POD ready."
 
 # ── 2. Deploy K8s registry ─────────────────────────────────────────────────
 
 echo "→ Deploying K8s registry..."
 kubectl apply -f "$SCRIPT_DIR/registry.yaml"
+
+# Applying both resources before waiting lets Kubernetes start them in
+# parallel, reducing cold-start latency.
+kubectl wait pod/"$POD" --for=condition=ready --timeout=60s
+echo "  ✓ Pod $POD ready."
 kubectl wait deployment/registry --for=condition=Available --timeout=60s
 echo "  ✓ Registry deployed."
 

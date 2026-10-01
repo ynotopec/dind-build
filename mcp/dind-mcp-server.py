@@ -20,6 +20,8 @@ import os
 import shlex
 import subprocess
 import sys
+import time
+import uuid
 
 from mcp.server.fastmcp import FastMCP
 
@@ -32,9 +34,14 @@ REGISTRY = "registry:5000"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def run_kubectl(args: list[str]) -> str:
+def run_kubectl(args: list[str], timeout: int = 120) -> str:
     cmd = ["kubectl", "-n", NS] + args
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"kubectl timed out after {timeout} seconds") from exc
     output = result.stdout.strip() or result.stderr.strip()
     if result.returncode:
         raise RuntimeError(f"kubectl exited with status {result.returncode}: {output or '(no output)'}")
@@ -43,23 +50,24 @@ def run_kubectl(args: list[str]) -> str:
 
 def ensure_pod() -> bool:
     try:
-        status = run_kubectl(["get", "pod", POD, "-o", "jsonpath={.status.phase}"])
+        status = run_kubectl([
+            "get", "pod", POD, "-o",
+            "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+        ])
     except RuntimeError:
         return False
-    return status == "Running"
+    return status == "True"
 
 
 def ensure_dockerd():
-    run_kubectl(["exec", POD, "--", "sh", "-c",
-                 "pkill dockerd 2>/dev/null || true; dockerd --insecure-registry registry:5000 &>/var/log/dockerd.log &"])
-    import time
-    for _ in range(10):
-        result = run_kubectl(["exec", POD, "--", "sh", "-c",
-                              "docker info >/dev/null 2>&1 && echo OK || echo FAIL"])
-        if "OK" in result:
+    """Wait briefly for the pod-managed daemon without restarting it."""
+    for _ in range(5):
+        try:
+            run_kubectl(["exec", POD, "--", "docker", "info"], timeout=15)
             return
-        time.sleep(2)
-    raise RuntimeError("Docker daemon did not become ready within 20 seconds")
+        except RuntimeError:
+            time.sleep(1)
+    raise RuntimeError("Docker daemon is unavailable; inspect the DinD pod logs")
 
 
 # ── Tool implementations (pure functions) ──────────────────────────────────
@@ -70,12 +78,14 @@ def _dind_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRU
         raise RuntimeError("DinD pod not running. Deploy: kubectl apply -f dind-pod.yaml")
     ensure_dockerd()
     encoded = base64.b64encode(dockerfile_content.encode()).decode("ascii")
+    build_dir = f"/tmp/dind-build-{uuid.uuid4().hex}"
     cmd = (
-        "rm -rf /tmp/dind-build && mkdir -p /tmp/dind-build && "
-        f"printf %s {shlex.quote(encoded)} | base64 -d > /tmp/dind-build/Dockerfile && "
-        f"docker build -t {shlex.quote(image_name)} /tmp/dind-build"
+        f"mkdir -p {shlex.quote(build_dir)} && "
+        f"trap 'rm -rf {shlex.quote(build_dir)}' EXIT; "
+        f"printf %s {shlex.quote(encoded)} | base64 -d > {shlex.quote(build_dir)}/Dockerfile && "
+        f"docker build -t {shlex.quote(image_name)} {shlex.quote(build_dir)}"
     )
-    result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd])
+    result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd], timeout=600)
     return f"# Build result for {image_name}\n\n```\n{result}\n```"
 
 

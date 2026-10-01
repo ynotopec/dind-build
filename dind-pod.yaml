@@ -8,9 +8,18 @@ spec:
   containers:
   - name: docker
     image: docker:24-dind
-    command: ["sh", "-c", "dockerd --insecure-registry registry:5000 &>/var/log/dockerd.log & sleep infinity"]
+    args: ["--insecure-registry", "registry:5000"]
     securityContext:
       privileged: true
+    startupProbe:
+      exec:
+        command: ["docker", "info"]
+      periodSeconds: 1
+      failureThreshold: 60
+    readinessProbe:
+      exec:
+        command: ["docker", "info"]
+      periodSeconds: 5
     volumeMounts:
     - name: docker-storage
       mountPath: /var/lib/docker
