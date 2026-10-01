@@ -104,5 +104,8 @@ que le service reparte au boot même sans session interactive.
 
 Les sept outils MCP exposés sont `docker_build`, `docker_push`, `docker_pull`,
 `docker_run`, `docker_list_images`, `docker_list_registry` et `docker_cleanup`.
+`docker_build` accepte aussi `context_files`, une table de chemins relatifs vers
+leurs contenus texte, afin de fournir au build les sources référencées par
+`COPY` et `ADD` en plus du Dockerfile.
 La configuration détaillée est disponible dans [SETUP.md](SETUP.md) et
 [mcp/README.md](mcp/README.md).

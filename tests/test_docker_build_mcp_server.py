@@ -1,6 +1,9 @@
 import importlib.util
+import base64
+import io
 import inspect
 import subprocess
+import tarfile
 import unittest
 from pathlib import Path
 from unittest.mock import call, patch
@@ -166,6 +169,52 @@ class ImageNameTests(unittest.TestCase):
                     tool("team/app:v1", registry_url="bad registry")
 
         ensure_dockerd.assert_not_called()
+
+
+class BuildContextTests(unittest.TestCase):
+    @patch.object(SERVER, "ensure_dockerd")
+    @patch.object(SERVER, "ensure_pod", return_value=True)
+    @patch.object(SERVER, "run_kubectl", return_value="success")
+    def test_build_transfers_dockerfile_and_context_files(
+        self, run_kubectl, _ensure_pod, _ensure_dockerd
+    ):
+        result = SERVER._docker_build(
+            "team/app:test",
+            "FROM scratch\nCOPY app/config.json /config.json\n",
+            {"app/config.json": '{"enabled": true}\n', "entrypoint.sh": "#!/bin/sh\n"},
+        )
+
+        call_args = run_kubectl.call_args
+        self.assertEqual(call_args.args[0][:3], ["exec", "-i", SERVER.POD])
+        self.assertEqual(call_args.kwargs["timeout"], 600)
+        archive = base64.b64decode(call_args.kwargs["input_data"])
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as context:
+            self.assertEqual(
+                set(context.getnames()),
+                {"Dockerfile", "app/config.json", "entrypoint.sh"},
+            )
+            self.assertEqual(
+                context.extractfile("app/config.json").read(), b'{"enabled": true}\n'
+            )
+        self.assertIn("success", result)
+
+    @patch.object(SERVER, "ensure_pod")
+    def test_build_rejects_context_paths_outside_context(self, ensure_pod):
+        for path in ("../secret", "/etc/passwd", "folder\\file", ""):
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(ValueError, "context path"):
+                    SERVER._docker_build("app:test", context_files={path: "content"})
+
+        ensure_pod.assert_not_called()
+
+    @patch.object(SERVER, "ensure_pod")
+    def test_build_rejects_dockerfile_in_context_files(self, ensure_pod):
+        with self.assertRaisesRegex(ValueError, "dockerfile_content"):
+            SERVER._docker_build(
+                "app:test", context_files={"Dockerfile": "FROM busybox\n"}
+            )
+
+        ensure_pod.assert_not_called()
 
 
 class HttpSecurityTests(unittest.TestCase):

@@ -208,9 +208,19 @@ Utiliser docker_build avec:
   - image_name: "mon-app:latest"
   - dockerfile_content: |
       FROM alpine:3.19
-      RUN echo "Hello" > /tmp/hello.txt
-      CMD ["cat", "/tmp/hello.txt"]
+      COPY app/message.txt /message.txt
+      CMD ["cat", "/message.txt"]
+  - context_files:
+      app/message.txt: |
+        Bonjour depuis le contexte de build
 ```
+
+`context_files` est une table optionnelle associant chaque chemin relatif POSIX
+à son contenu texte UTF-8. Le serveur regroupe le Dockerfile et ces fichiers
+dans une archive compressée, la transfère au pod via l'entrée standard, puis
+utilise l'ensemble comme contexte de `docker build`. Les chemins absolus, les
+chemins contenant `..` et une entrée `Dockerfile` sont refusés ; le Dockerfile
+doit toujours être fourni avec `dockerfile_content`.
 
 ### Push vers registry
 
