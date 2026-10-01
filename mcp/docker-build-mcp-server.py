@@ -14,6 +14,7 @@ K8s config:
 import argparse
 import asyncio
 import base64
+import io
 import logging
 import os
 import re
@@ -21,8 +22,10 @@ import secrets
 import shlex
 import shutil
 import subprocess
+import tarfile
 import time
 import uuid
+from pathlib import PurePosixPath
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.provider import AccessToken
@@ -105,14 +108,22 @@ class StaticTokenVerifier:
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def run_kubectl(args: list[str], timeout: int = 120) -> str:
+def run_kubectl(
+    args: list[str], timeout: int = 120, input_data: str | None = None
+) -> str:
     if not NS:
         raise RuntimeError("KUBE_NAMESPACE must be set")
     cmd = [find_kubectl(), "-n", NS] + args
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
-        )
+        run_options = {
+            "capture_output": True,
+            "text": True,
+            "timeout": timeout,
+            "check": False,
+        }
+        if input_data is not None:
+            run_options["input"] = input_data
+        result = subprocess.run(cmd, **run_options)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"kubectl timed out after {timeout} seconds") from exc
     if result.returncode:
@@ -160,21 +171,66 @@ def ensure_dockerd():
 
 # ── Tool implementations (pure functions) ──────────────────────────────────
 
-def _docker_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]") -> str:
+def _validate_context_path(path: str) -> PurePosixPath:
+    """Return a safe, relative path for a build-context file."""
+    if not path or "\\" in path:
+        raise ValueError("Build context paths must be non-empty POSIX paths")
+    normalized = PurePosixPath(path)
+    if normalized.is_absolute() or ".." in normalized.parts:
+        raise ValueError(f"Build context path must stay inside the context: {path}")
+    if normalized.name in ("", "."):
+        raise ValueError(f"Build context path must name a file: {path}")
+    return normalized
+
+
+def _create_build_context(
+    dockerfile_content: str, context_files: dict[str, str]
+) -> str:
+    """Create a gzipped tar context and return it encoded for stdin transport."""
+    archive_buffer = io.BytesIO()
+    with tarfile.open(fileobj=archive_buffer, mode="w:gz") as archive:
+        files = {"Dockerfile": dockerfile_content, **context_files}
+        for path, content in files.items():
+            encoded_content = content.encode("utf-8")
+            tar_info = tarfile.TarInfo(path)
+            tar_info.size = len(encoded_content)
+            tar_info.mode = 0o644
+            archive.addfile(tar_info, io.BytesIO(encoded_content))
+    return base64.b64encode(archive_buffer.getvalue()).decode("ascii")
+
+
+def _docker_build(
+    image_name: str,
+    dockerfile_content: str = "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]",
+    context_files: dict[str, str] | None = None,
+) -> str:
     """Build a Docker image inside the K8s Docker build pod."""
     validate_image_name(image_name)
+    context_files = context_files or {}
+    validated_files = {}
+    for path, content in context_files.items():
+        normalized_path = str(_validate_context_path(path))
+        if normalized_path == "Dockerfile":
+            raise ValueError("Use dockerfile_content instead of context_files['Dockerfile']")
+        if normalized_path in validated_files:
+            raise ValueError(f"Duplicate normalized build context path: {normalized_path}")
+        validated_files[normalized_path] = content
     if not ensure_pod():
         raise RuntimeError("Docker build pod not running. Deploy: kubectl apply -f docker-build-pod.yaml")
     ensure_dockerd()
-    encoded = base64.b64encode(dockerfile_content.encode()).decode("ascii")
+    encoded_context = _create_build_context(dockerfile_content, validated_files)
     build_dir = f"/tmp/docker-build-{uuid.uuid4().hex}"
     cmd = (
         f"mkdir -p {shlex.quote(build_dir)} && "
         f"trap 'rm -rf {shlex.quote(build_dir)}' EXIT; "
-        f"printf %s {shlex.quote(encoded)} | base64 -d > {shlex.quote(build_dir)}/Dockerfile && "
+        f"base64 -d | tar -xz -C {shlex.quote(build_dir)} && "
         f"docker build -t {shlex.quote(image_name)} {shlex.quote(build_dir)}"
     )
-    result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd], timeout=600)
+    result = run_kubectl(
+        ["exec", "-i", POD, "--", "sh", "-c", cmd],
+        timeout=600,
+        input_data=encoded_context,
+    )
     return f"# Build result for {image_name}\n\n```\n{result}\n```"
 
 
@@ -243,6 +299,12 @@ TOOL_TABLE = {
                     "type": "string",
                     "description": "Dockerfile content",
                     "default": "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]"
+                },
+                "context_files": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "description": "Build context files as relative POSIX path to UTF-8 content",
+                    "default": {}
                 }
             },
             "required": ["image_name"]
