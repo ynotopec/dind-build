@@ -12,7 +12,7 @@ Prérequis : Linux, `kubectl`, un cluster Kubernetes accessible et
 
 ```bash
 cp .env.example .env
-# Renseigner KUBE_NAMESPACE et MCP_API_TOKEN dans .env
+# Renseigner KUBE_NAMESPACE dans .env (le token HTTP peut être généré par install.sh)
 ./install.sh
 ./docker-build-setup.sh
 ./run.sh                         # IP 127.0.0.1, port libre
@@ -21,6 +21,8 @@ cp .env.example .env
 
 L'environnement Python est installé dans `~/venv/<nom-du-projet>`. Relancer
 `./install.sh` met à niveau une installation existante sans modifier `.env`.
+L'installation refuse de continuer tant que le namespace explicite n'est pas
+renseigné.
 
 Endpoint : `http://<IP>:<PORT>/mcp`
 
@@ -33,8 +35,8 @@ Authorization: Bearer <MCP_API_TOKEN>
 Pour utiliser un port stable et le service utilisateur :
 
 ```bash
-# Définir MCP_PORT dans .env, puis :
-systemctl --user enable --now docker-build-mcp.service
+# Définir MCP_PORT dans .env, relancer ./install.sh, puis vérifier :
+systemctl --user status docker-build-mcp.service
 ```
 
 Le nom de l'unité reprend le nom du répertoire du projet. Si le dépôt a été
@@ -56,6 +58,12 @@ redémarrer Hermes ou ouvrir une nouvelle session :
 
 Utiliser `./install.sh --no-hermes` pour désactiver cette intégration. Le mode
 stdio n'expose aucun port ; `MCP_API_TOKEN` protège uniquement l'API HTTP.
+
+La configuration et le dépôt doivent se trouver sur un volume persistant pour
+survivre à la recréation complète du conteneur. Un redémarrage simple est pris
+en charge par le cycle de vie Hermes. Sur un Linux classique, l'installateur
+active directement l'unité `systemd --user` et tente d'activer le *linger* afin
+que le service reparte au boot même sans session interactive.
 
 ## Commandes
 

@@ -24,10 +24,13 @@ la variable `KUBE_NAMESPACE`.
 Depuis la racine du dépôt :
 
 ```bash
+cp .env.example .env
+# Renseigner KUBE_NAMESPACE dans .env.
 ./install.sh
 ```
 
 Le script utilise `uv` et crée le venv dans `~/venv/<nom-du-projet>`.
+Il génère le token HTTP si nécessaire et refuse tout namespace implicite.
 
 ### 2. Configurer l'agent
 

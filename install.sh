@@ -17,6 +17,42 @@ for arg in "$@"; do
     esac
 done
 
+if [[ -f "$PROJECT_DIR/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$PROJECT_DIR/.env"
+    set +a
+fi
+
+if [[ -z "${KUBE_NAMESPACE:-}" || "$KUBE_NAMESPACE" == "<namespace>" ]]; then
+    if [[ ! -f "$PROJECT_DIR/.env" ]]; then
+        cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+        chmod 600 "$PROJECT_DIR/.env"
+    fi
+    echo "KUBE_NAMESPACE is required. Set it in $PROJECT_DIR/.env or export it, then rerun install.sh." >&2
+    exit 2
+fi
+
+if [[ -z "${MCP_API_TOKEN:-}" || "$MCP_API_TOKEN" == \<*\> ]]; then
+    MCP_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+fi
+
+if [[ ! -f "$PROJECT_DIR/.env" ]]; then
+    umask 077
+    {
+        printf 'KUBE_NAMESPACE=%q\n' "$KUBE_NAMESPACE"
+        printf 'MCP_API_TOKEN=%q\n' "$MCP_API_TOKEN"
+        sed -n '/^#/p' "$PROJECT_DIR/.env.example"
+    } >"$PROJECT_DIR/.env"
+elif ! grep -Eq '^MCP_API_TOKEN=' "$PROJECT_DIR/.env" || grep -Eq '^MCP_API_TOKEN="?<[^>]+>"?$' "$PROJECT_DIR/.env"; then
+    config_tmp="$(mktemp)"
+    grep -Ev '^MCP_API_TOKEN=' "$PROJECT_DIR/.env" >"$config_tmp"
+    printf 'MCP_API_TOKEN=%q\n' "$MCP_API_TOKEN" >>"$config_tmp"
+    cat "$config_tmp" >"$PROJECT_DIR/.env"
+    rm -f "$config_tmp"
+fi
+chmod 600 "$PROJECT_DIR/.env"
+
 if ! command -v uv >/dev/null 2>&1; then
     echo "uv is required: https://docs.astral.sh/uv/getting-started/installation/" >&2
     exit 1
@@ -26,12 +62,6 @@ mkdir -p "$(dirname "$VENV_DIR")" "$UNIT_DIR"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
 uv venv --python "$PYTHON_BIN" "$VENV_DIR"
 uv pip install --python "$VENV_DIR/bin/python" --upgrade -r "$PROJECT_DIR/mcp/requirements.txt"
-
-if [[ ! -f "$PROJECT_DIR/.env" ]]; then
-    cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
-    chmod 600 "$PROJECT_DIR/.env"
-    echo "Created $PROJECT_DIR/.env; configure it before starting the service."
-fi
 
 HERMES_CONFIG="${HERMES_CONFIG:-$HOME/.hermes/config.yaml}"
 if [[ "$CONFIGURE_HERMES" == auto ]]; then
@@ -117,18 +147,30 @@ EOF
 
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
     systemctl --user daemon-reload
-    if systemctl --user is-active --quiet "$UNIT_NAME"; then
-        systemctl --user restart "$UNIT_NAME"
+    systemctl --user enable "$UNIT_NAME"
+    systemctl --user restart "$UNIT_NAME"
+    if command -v loginctl >/dev/null 2>&1; then
+        loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || \
+            echo "Could not enable user lingering; the service will start when the user logs in."
     fi
+    AUTOSTART="systemd --user"
 else
     echo "User systemd is unavailable; the unit was installed but not reloaded."
+    if [[ "$CONFIGURE_HERMES" == true ]]; then
+        AUTOSTART="Hermes stdio lifecycle"
+    else
+        AUTOSTART="unavailable"
+    fi
 fi
 
 echo "Installed virtual environment: $VENV_DIR"
 echo "Installed user service: $UNIT_NAME"
-echo "Start it with: systemctl --user enable --now $UNIT_NAME"
+echo "Persistent startup: $AUTOSTART"
 if [[ "$CONFIGURE_HERMES" == true ]]; then
     echo "Restart Hermes or open a new session to load the MCP server."
 else
     echo "Hermes not detected; run '$0 --hermes' to configure it."
+    if [[ "$AUTOSTART" == unavailable ]]; then
+        echo "No supported supervisor was detected; configure the container runtime to execute $PROJECT_DIR/run.sh on restart." >&2
+    fi
 fi
