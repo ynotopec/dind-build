@@ -78,6 +78,31 @@ class ImageNameTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     SERVER.validate_image_name(image_name)
 
+    @patch.object(SERVER, "ensure_dockerd")
+    def test_all_image_tools_reject_invalid_names_before_kubectl(self, ensure_dockerd):
+        invalid_calls = (
+            (SERVER._dind_build, ("../../build:latest",)),
+            (SERVER._dind_push, ("../../push:latest",)),
+            (SERVER._dind_pull, ("../../pull:latest",)),
+            (SERVER._dind_run, ("../../run:latest",)),
+        )
+
+        for tool, args in invalid_calls:
+            with self.subTest(tool=tool.__name__):
+                with self.assertRaises(ValueError):
+                    tool(*args)
+
+        ensure_dockerd.assert_not_called()
+
+    @patch.object(SERVER, "ensure_dockerd")
+    def test_push_and_pull_reject_invalid_registry_before_kubectl(self, ensure_dockerd):
+        for tool in (SERVER._dind_push, SERVER._dind_pull):
+            with self.subTest(tool=tool.__name__):
+                with self.assertRaises(ValueError):
+                    tool("team/app:v1", registry_url="bad registry")
+
+        ensure_dockerd.assert_not_called()
+
 
 class HttpSecurityTests(unittest.TestCase):
     def test_http_binds_to_loopback_by_default(self):

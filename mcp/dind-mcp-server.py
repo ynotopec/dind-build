@@ -65,7 +65,7 @@ def run_kubectl(args: list[str], timeout: int = 120) -> str:
 
 
 def validate_image_name(image_name: str) -> str:
-    """Validate a Docker tag accepted by the tools before invoking Docker."""
+    """Validate a Docker image reference before invoking Docker."""
     if not IMAGE_NAME_PATTERN.fullmatch(image_name):
         raise ValueError(
             "Invalid image name; use lowercase repository components and an "
@@ -122,7 +122,9 @@ def _dind_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRU
 
 def _dind_push(image_name: str, registry_url: str = REGISTRY) -> str:
     """Push an image to the local K8s registry (registry:5000)."""
+    validate_image_name(image_name)
     tagged = f"{registry_url}/{image_name}"
+    validate_image_name(tagged)
     ensure_dockerd()
     run_kubectl(["exec", POD, "--", "docker", "tag", image_name, tagged])
     result = run_kubectl(["exec", POD, "--", "docker", "push", tagged])
@@ -131,7 +133,9 @@ def _dind_push(image_name: str, registry_url: str = REGISTRY) -> str:
 
 def _dind_pull(image_name: str, registry_url: str = REGISTRY) -> str:
     """Pull an image from the local K8s registry."""
+    validate_image_name(image_name)
     full_image = f"{registry_url}/{image_name}"
+    validate_image_name(full_image)
     ensure_dockerd()
     result = run_kubectl(["exec", POD, "--", "docker", "pull", full_image])
     return f"# Pull result for {full_image}\n\n```\n{result}\n```"
@@ -139,6 +143,7 @@ def _dind_pull(image_name: str, registry_url: str = REGISTRY) -> str:
 
 def _dind_run(image_name_with_registry: str, command: str = "") -> str:
     """Run a container from the K8s registry."""
+    validate_image_name(image_name_with_registry)
     ensure_dockerd()
     cmd_str = f"docker run --rm {shlex.quote(image_name_with_registry)}"
     if command:
