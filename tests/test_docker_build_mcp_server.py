@@ -134,5 +134,21 @@ class HttpSecurityTests(unittest.TestCase):
         self.assertEqual(default_host, "127.0.0.1")
 
 
+class HttpAuthenticationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_static_token_verifier_accepts_only_configured_token(self):
+        verifier = SERVER.StaticTokenVerifier("expected-token")
+
+        accepted = await verifier.verify_token("expected-token")
+        rejected = await verifier.verify_token("other-token")
+
+        self.assertEqual(accepted.client_id, "mcp-client")
+        self.assertIsNone(rejected)
+
+    async def test_http_transport_requires_api_token(self):
+        with patch.dict(SERVER.os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "MCP_API_TOKEN must be set"):
+                await SERVER.run_http()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -33,7 +33,7 @@ Ajouter le serveur à la configuration standard du client MCP :
 {
   "mcpServers": {
     "docker-build": {
-      "command": "python3",
+      "command": "/home/<user>/venv/<project>/bin/python",
       "args": ["/path/to/docker-build/mcp/docker-build-mcp-server.py"],
       "env": {"KUBE_NAMESPACE": "<namespace>"}
     }
@@ -66,8 +66,8 @@ export KUBE_NAMESPACE="<namespace>"
 ### 2. Installation client
 
 ```bash
-# Sur chaque machine qui héberge un agent
-python3 -m pip install -r mcp/requirements.txt
+# Sur chaque machine qui héberge un client MCP
+./install.sh
 
 # Ajouter le serveur à la configuration du client (voir ci-dessus)
 # Redémarrer l'agent
@@ -107,6 +107,6 @@ kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker push registry:5000/myap
 
 1. Copier les fichiers de ce dépôt
 2. Définir `KUBE_NAMESPACE`, puis lancer `./docker-build-setup.sh`
-3. Configurer le client MCP après `pip install -r mcp/requirements.txt`
+3. Lancer `./install.sh`, puis configurer le client MCP
 4. Redémarrer l'agent
 5. Build !

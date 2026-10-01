@@ -21,9 +21,13 @@ la variable `KUBE_NAMESPACE`.
 
 ### 1. Installer le MCP server
 
+Depuis la racine du dépôt :
+
 ```bash
-python3 -m pip install -r requirements.txt
+./install.sh
 ```
+
+Le script utilise `uv` et crée le venv dans `~/venv/<nom-du-projet>`.
 
 ### 2. Configurer l'agent
 
@@ -33,7 +37,7 @@ Ajouter le serveur à la configuration standard du client MCP :
 {
   "mcpServers": {
     "docker-build": {
-      "command": "python3",
+      "command": "/home/<user>/venv/<project>/bin/python",
       "args": ["/path/to/docker-build/mcp/docker-build-mcp-server.py"],
       "env": {"KUBE_NAMESPACE": "<namespace>"}
     }
@@ -77,7 +81,7 @@ Les causes les plus fréquentes sont :
 
 - la nouvelle session utilise un autre utilisateur, profil ou fichier de
   configuration ;
-- `command: python3` désigne un autre interpréteur, dans lequel le paquet
+- `command` désigne un autre interpréteur, dans lequel le paquet
   `mcp` n'est pas installé ;
 - le chemin relatif du script ne fonctionne plus depuis le nouveau répertoire
   courant ;
@@ -142,16 +146,23 @@ Interprétation :
 - `docker info` réussit mais l'image manque : le pod a probablement été
   recréé, ou l'image avait été construite dans un autre contexte Kubernetes.
 
-### Transport HTTP
+### API Streamable HTTP avec bearer token
 
 ```bash
-python3 docker-build-mcp-server.py --http --port 8080
+./run.sh 127.0.0.1 8000
 ```
 
 Le serveur HTTP écoute uniquement sur `127.0.0.1` par défaut, car ses outils
 permettent de construire et d'exécuter des conteneurs. Pour un accès distant,
-utiliser `--host` derrière un reverse proxy authentifié et chiffré ; ne pas
+passer l'adresse d'écoute en premier argument à `run.sh`, derrière un reverse
+proxy authentifié et chiffré ; ne pas
 exposer directement ce port sur un réseau non fiable.
+
+Chaque requête doit fournir le token défini par `MCP_API_TOKEN` :
+
+```http
+Authorization: Bearer <MCP_API_TOKEN>
+```
 
 ## Exemples d'usage
 

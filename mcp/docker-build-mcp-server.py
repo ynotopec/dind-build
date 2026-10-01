@@ -3,7 +3,7 @@
 Docker Build Factory MCP Server — dual transport.
 
   Stdio   → for MCP clients (python3 docker-build-mcp-server.py)
-  HTTP    → for HTTP MCP clients (python3 docker-build-mcp-server.py --http [--port 8080])
+  HTTP    → for HTTP MCP clients (python3 docker-build-mcp-server.py --http [--port 8000])
 
 Streamable HTTP endpoint: http://<server>:<port>/mcp
 
@@ -17,12 +17,15 @@ import base64
 import logging
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import time
 import uuid
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 
 # ── K8s config ──────────────────────────────────────────────────────────────
 
@@ -43,6 +46,18 @@ logging.basicConfig(
     format="%(asctime)s level=%(levelname)s logger=%(name)s message=%(message)s",
 )
 LOGGER = logging.getLogger("docker-build")
+
+
+class StaticTokenVerifier:
+    """Verify the single bearer token configured for this private MCP API."""
+
+    def __init__(self, token: str):
+        self.token = token
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not secrets.compare_digest(token, self.token):
+            return None
+        return AccessToken(token=token, client_id="mcp-client", scopes=[])
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -267,12 +282,21 @@ async def run_stdio():
 
 # ── HTTP (Streamable HTTP, stateless mode) ────────────────────
 
-async def run_http(host: str = "127.0.0.1", port: int = 8080):
+async def run_http(host: str = "127.0.0.1", port: int = 8000):
+    api_token = os.environ.get("MCP_API_TOKEN")
+    if not api_token:
+        raise RuntimeError("MCP_API_TOKEN must be set for HTTP transport")
+    public_url = os.environ.get("MCP_PUBLIC_URL", f"http://127.0.0.1:{port}").rstrip("/")
     server = create_server(
         host=host,
         port=port,
         streamable_http_path="/mcp",
         stateless_http=True,
+        token_verifier=StaticTokenVerifier(api_token),
+        auth=AuthSettings(
+            issuer_url=public_url,
+            resource_server_url=f"{public_url}/mcp",
+        ),
     )
 
     LOGGER.info(
@@ -295,7 +319,7 @@ async def main():
         default="127.0.0.1",
         help="HTTP bind address (default: 127.0.0.1; use an authenticated proxy for remote access)",
     )
-    parser.add_argument("--port", type=int, default=8080, help="HTTP port (default: 8080)")
+    parser.add_argument("--port", type=int, default=8000, help="HTTP port (default: 8000)")
     args = parser.parse_args()
 
     if args.http:

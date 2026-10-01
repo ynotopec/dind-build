@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 kubectl() { command kubectl -n "$NS" "$@"; }
 
-# The namespace argument is part of the setup contract, so create it on the
+# The namespace variable is part of the setup contract, so create it on the
 # first installation on a cluster.
 command kubectl get namespace "$NS" >/dev/null 2>&1 || command kubectl create namespace "$NS"
 
@@ -66,13 +66,13 @@ echo "  ── SERVER (done) ─────────────────
 echo "  Docker build pod and K8s registry are now running."
 echo ""
 echo "  ── CLIENT (Agent) ───────────────────────────────"
-echo "  1. python3 -m pip install -r '$SCRIPT_DIR/mcp/requirements.txt'"
+echo "  1. $SCRIPT_DIR/install.sh"
 echo "  2. Add the following entry to your MCP client configuration:"
 echo ""
 echo '    {'
 echo '      "mcpServers": {'
 echo '        "docker-build": {'
-echo '          "command": "python3",'
+echo "          \"command\": \"$HOME/venv/$(basename "$SCRIPT_DIR")/bin/python\","
 echo "          \"args\": [\"$SCRIPT_DIR/mcp/docker-build-mcp-server.py\"],"
 echo "          \"env\": {\"KUBE_NAMESPACE\": \"$NS\"}"
 echo '        }'
