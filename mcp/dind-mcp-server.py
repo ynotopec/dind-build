@@ -16,10 +16,13 @@ K8s config:
 import argparse
 import asyncio
 import base64
+import logging
 import os
+import re
 import shlex
 import subprocess
-import sys
+import time
+import uuid
 
 from mcp.server.fastmcp import FastMCP
 
@@ -28,60 +31,100 @@ from mcp.server.fastmcp import FastMCP
 NS = os.environ.get("KUBE_NAMESPACE", os.environ.get("DIND_NAMESPACE", "demo1"))
 POD = "dind-build"
 REGISTRY = "registry:5000"
+DOCKER_INFO_ATTEMPTS = 5
+DOCKER_INFO_TIMEOUT_SECONDS = 5
+IMAGE_NAME_PATTERN = re.compile(
+    r"^(?=.{1,255}$)"
+    r"(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)*"
+    r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$"
+)
+
+logging.basicConfig(
+    level=os.environ.get("DIND_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s level=%(levelname)s logger=%(name)s message=%(message)s",
+)
+LOGGER = logging.getLogger("dind-build")
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def run_kubectl(args: list[str]) -> str:
+def run_kubectl(args: list[str], timeout: int = 120) -> str:
     cmd = ["kubectl", "-n", NS] + args
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
-    output = result.stdout.strip() or result.stderr.strip()
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"kubectl timed out after {timeout} seconds") from exc
     if result.returncode:
-        raise RuntimeError(f"kubectl exited with status {result.returncode}: {output or '(no output)'}")
-    return output
+        error = result.stderr.strip() or result.stdout.strip() or "(no output)"
+        LOGGER.error("kubectl failed status=%d error=%s", result.returncode, error)
+        raise RuntimeError(f"kubectl exited with status {result.returncode}: {error}")
+    return result.stdout.strip()
+
+
+def validate_image_name(image_name: str) -> str:
+    """Validate a Docker image reference before invoking Docker."""
+    if not IMAGE_NAME_PATTERN.fullmatch(image_name):
+        raise ValueError(
+            "Invalid image name; use lowercase repository components and an "
+            "optional Docker tag (for example, registry:5000/team/app:v1)"
+        )
+    return image_name
 
 
 def ensure_pod() -> bool:
     try:
-        status = run_kubectl(["get", "pod", POD, "-o", "jsonpath={.status.phase}"])
+        status = run_kubectl([
+            "get", "pod", POD, "-o",
+            "jsonpath={.status.conditions[?(@.type=='Ready')].status}",
+        ])
     except RuntimeError:
         return False
-    return status == "Running"
+    return status == "True"
 
 
 def ensure_dockerd():
-    run_kubectl(["exec", POD, "--", "sh", "-c",
-                 "pkill dockerd 2>/dev/null || true; dockerd --insecure-registry registry:5000 &>/var/log/dockerd.log &"])
-    import time
-    for _ in range(10):
-        result = run_kubectl(["exec", POD, "--", "sh", "-c",
-                              "docker info >/dev/null 2>&1 && echo OK || echo FAIL"])
-        if "OK" in result:
+    """Try bounded Docker checks without restarting the pod-managed daemon."""
+    for attempt in range(1, DOCKER_INFO_ATTEMPTS + 1):
+        try:
+            run_kubectl(
+                ["exec", POD, "--", "docker", "info"],
+                timeout=DOCKER_INFO_TIMEOUT_SECONDS,
+            )
             return
-        time.sleep(2)
-    raise RuntimeError("Docker daemon did not become ready within 20 seconds")
+        except RuntimeError:
+            if attempt < DOCKER_INFO_ATTEMPTS:
+                time.sleep(1)
+    raise RuntimeError("Docker daemon is unavailable; inspect the DinD pod logs")
 
 
 # ── Tool implementations (pure functions) ──────────────────────────────────
 
 def _dind_build(image_name: str, dockerfile_content: str = "FROM alpine:3.19\nRUN echo 'Hello'\nCMD [\"echo\", \"Hello\"]") -> str:
     """Build a Docker image inside the K8s DinD pod."""
+    validate_image_name(image_name)
     if not ensure_pod():
         raise RuntimeError("DinD pod not running. Deploy: kubectl apply -f dind-pod.yaml")
     ensure_dockerd()
     encoded = base64.b64encode(dockerfile_content.encode()).decode("ascii")
+    build_dir = f"/tmp/dind-build-{uuid.uuid4().hex}"
     cmd = (
-        "rm -rf /tmp/dind-build && mkdir -p /tmp/dind-build && "
-        f"printf %s {shlex.quote(encoded)} | base64 -d > /tmp/dind-build/Dockerfile && "
-        f"docker build -t {shlex.quote(image_name)} /tmp/dind-build"
+        f"mkdir -p {shlex.quote(build_dir)} && "
+        f"trap 'rm -rf {shlex.quote(build_dir)}' EXIT; "
+        f"printf %s {shlex.quote(encoded)} | base64 -d > {shlex.quote(build_dir)}/Dockerfile && "
+        f"docker build -t {shlex.quote(image_name)} {shlex.quote(build_dir)}"
     )
-    result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd])
+    result = run_kubectl(["exec", POD, "--", "sh", "-c", cmd], timeout=600)
     return f"# Build result for {image_name}\n\n```\n{result}\n```"
 
 
 def _dind_push(image_name: str, registry_url: str = REGISTRY) -> str:
     """Push an image to the local K8s registry (registry:5000)."""
+    validate_image_name(image_name)
     tagged = f"{registry_url}/{image_name}"
+    validate_image_name(tagged)
     ensure_dockerd()
     run_kubectl(["exec", POD, "--", "docker", "tag", image_name, tagged])
     result = run_kubectl(["exec", POD, "--", "docker", "push", tagged])
@@ -90,7 +133,9 @@ def _dind_push(image_name: str, registry_url: str = REGISTRY) -> str:
 
 def _dind_pull(image_name: str, registry_url: str = REGISTRY) -> str:
     """Pull an image from the local K8s registry."""
+    validate_image_name(image_name)
     full_image = f"{registry_url}/{image_name}"
+    validate_image_name(full_image)
     ensure_dockerd()
     result = run_kubectl(["exec", POD, "--", "docker", "pull", full_image])
     return f"# Pull result for {full_image}\n\n```\n{result}\n```"
@@ -98,6 +143,7 @@ def _dind_pull(image_name: str, registry_url: str = REGISTRY) -> str:
 
 def _dind_run(image_name_with_registry: str, command: str = "") -> str:
     """Run a container from the K8s registry."""
+    validate_image_name(image_name_with_registry)
     ensure_dockerd()
     cmd_str = f"docker run --rm {shlex.quote(image_name_with_registry)}"
     if command:
@@ -215,24 +261,27 @@ def create_server(**settings) -> FastMCP:
 async def run_stdio():
     server = create_server()
 
-    print("DinD Build Factory MCP Server (stdio)", file=sys.stderr)
-    print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
+    LOGGER.info("transport=stdio namespace=%s tools=%s", NS, ",".join(TOOL_NAMES))
     await server.run_stdio_async()
 
 
 # ── HTTP (Open WebUI — Streamable HTTP, stateless mode) ────────────────────
 
-async def run_http(port: int = 8080):
+async def run_http(host: str = "127.0.0.1", port: int = 8080):
     server = create_server(
-        host="0.0.0.0",
+        host=host,
         port=port,
         streamable_http_path="/mcp",
         stateless_http=True,
     )
 
-    print("DinD Build Factory MCP Server (HTTP — stateless)", file=sys.stderr)
-    print(f"Namespace: {NS}  Tools: {', '.join(TOOL_NAMES)}", file=sys.stderr)
-    print(f"URL: http://0.0.0.0:{port}/mcp", file=sys.stderr)
+    LOGGER.info(
+        "transport=http mode=stateless namespace=%s tools=%s url=http://%s:%d/mcp",
+        NS,
+        ",".join(TOOL_NAMES),
+        host,
+        port,
+    )
     await server.run_streamable_http_async()
 
 
@@ -241,11 +290,16 @@ async def run_http(port: int = 8080):
 async def main():
     parser = argparse.ArgumentParser(description="DinD Build Factory MCP Server")
     parser.add_argument("--http", action="store_true", help="Run HTTP mode (for Open WebUI)")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="HTTP bind address (default: 127.0.0.1; use an authenticated proxy for remote access)",
+    )
     parser.add_argument("--port", type=int, default=8080, help="HTTP port (default: 8080)")
     args = parser.parse_args()
 
     if args.http:
-        await run_http(args.port)
+        await run_http(args.host, args.port)
     else:
         await run_stdio()
 
@@ -254,4 +308,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Server stopped.")
+        LOGGER.info("server stopped")

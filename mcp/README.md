@@ -58,6 +58,17 @@ mcp_dind_list_registry
 mcp_dind_cleanup
 ```
 
+### Transport HTTP
+
+```bash
+python3 dind-mcp-server.py --http --port 8080
+```
+
+Le serveur HTTP écoute uniquement sur `127.0.0.1` par défaut, car ses outils
+permettent de construire et d'exécuter des conteneurs. Pour un accès distant,
+utiliser `--host` derrière un reverse proxy authentifié et chiffré ; ne pas
+exposer directement ce port sur un réseau non fiable.
+
 ## Exemples d'usage
 
 ### Builder une image

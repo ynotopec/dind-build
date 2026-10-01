@@ -13,6 +13,12 @@ REGISTRY_HOST="registry:5000"
 image_name="${1:?Usage: dind-build.sh IMAGE_NAME [BUILD_CONTEXT_DIR]}"
 build_context="${2:-.}"
 
+# Fail locally before incurring any Kubernetes round trips.
+if [[ ! -f "$build_context/Dockerfile" ]]; then
+    echo "[✗] No Dockerfile found in $build_context" >&2
+    exit 1
+fi
+
 kubectl() { command kubectl -n "$NS" "$@"; }
 
 # 1. Deploy pod (idempotent, only if it doesn't exist)
@@ -21,53 +27,33 @@ if kubectl get pod "$POD_NAME" &>/dev/null; then
 else
     echo "[→] Deploying DinD pod to namespace $NS..."
     kubectl apply -f "$SCRIPT_DIR/dind-pod.yaml"
-    echo "[→] Waiting for pod to be ready..."
-    kubectl wait pod/dind-build --for=condition=ready --timeout=60s
-    echo "[✓] Pod ready."
+fi
+echo "[→] Waiting for pod and Docker daemon to be ready..."
+kubectl wait pod/"$POD_NAME" --for=condition=ready --timeout=60s
+echo "[✓] Pod ready."
+
+# Keep Docker's layer cache by default. Pruning before every build makes repeat
+# builds slower; constrained environments can opt in explicitly.
+if [[ "${DIND_PRUNE_BEFORE_BUILD:-false}" == "true" ]]; then
+    echo "[→] Pruning unused Docker data..."
+    kubectl exec "$POD_NAME" -- docker system prune -f &>/dev/null
 fi
 
-# 2. Start dockerd with insecure-registry flag
-echo "[→] Starting dockerd with insecure registry $REGISTRY_HOST..."
-kubectl exec "$POD_NAME" -- sh -c '
-echo "[→] Stopping dockerd if running..."
-pkill dockerd 2>/dev/null || true
-sleep 2
-echo "[→] Starting dockerd with insecure registry..."
-dockerd --insecure-registry '"$REGISTRY_HOST"' &>/var/log/dockerd.log &
-echo "[→] Waiting for dockerd to be ready..."
-for i in $(seq 1 15); do
-    if docker info >/dev/null 2>&1; then
-        echo "[✓] dockerd is ready."
-        exit 0
-    fi
-    sleep 2
-done
-echo "[✗] dockerd failed to start"
-exit 1
-'
+# Stream the context directly instead of creating a local tarball and then
+# making kubectl cp package that tarball a second time. A unique remote
+# directory also allows concurrent builds.
+BUILD_DIR="$(kubectl exec "$POD_NAME" -- mktemp -d /tmp/dind-build.XXXXXX)"
+cleanup() {
+    kubectl exec "$POD_NAME" -- rm -rf -- "$BUILD_DIR" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
-# 3. Prune old images to free space
-echo "[→] Pruning old images..."
-kubectl exec "$POD_NAME" -- docker system prune -f &>/dev/null
-
-# 4. Copy build context into the pod using tar
-BUILD_DIR="dind-build-tmp"
 echo "[→] Copying build context to pod..."
-mkdir -p "$BUILD_DIR"
-if [ -f "$build_context/Dockerfile" ]; then
-    tar cf "/tmp/$BUILD_DIR.tar" -C "$build_context" .
-    kubectl cp "/tmp/$BUILD_DIR.tar" "$POD_NAME:/tmp/$BUILD_DIR.tar"
-    kubectl exec "$POD_NAME" -- sh -c "mkdir -p /tmp/$BUILD_DIR && tar xf /tmp/$BUILD_DIR.tar -C /tmp/$BUILD_DIR"
-    rm -f "/tmp/$BUILD_DIR.tar"
-else
-    echo "[✗] No Dockerfile found in $build_context"
-    rm -rf "$BUILD_DIR"
-    exit 1
-fi
+tar -C "$build_context" -cf - . | kubectl exec -i "$POD_NAME" -- tar -C "$BUILD_DIR" -xf -
 
-# 5. Build
-echo "[→] Building $image_name from /tmp/$BUILD_DIR ..."
-kubectl exec "$POD_NAME" -- docker build -t "$image_name" "/tmp/$BUILD_DIR"
+# Build while retaining daemon-side layers for low-latency repeat builds.
+echo "[→] Building $image_name from $BUILD_DIR ..."
+kubectl exec "$POD_NAME" -- docker build -t "$image_name" "$BUILD_DIR"
 
 # 6. Verify
 echo "[→] Verifying image..."

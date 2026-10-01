@@ -19,8 +19,11 @@ Un seul script déploie tout :
 ```
 
 Déploie automatiquement :
+- **Namespace** : créé automatiquement s'il n'existe pas
 - **Pod DinD** : docker daemon à l'intérieur de K8s
 - **Registry K8s** : registry locale sur port 5000
+
+Le pod et la registry démarrent en parallèle, puis le script attend leur disponibilité.
 
 ### Côté Client (Agent)
 
