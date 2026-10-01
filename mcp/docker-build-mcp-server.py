@@ -2,15 +2,13 @@
 """
 Docker Build Factory MCP Server — dual transport.
 
-  Stdio   → for Hermes Agent (python3 docker-build-mcp-server.py)
-  HTTP    → for Open WebUI (python3 docker-build-mcp-server.py --http [--port 8080])
+  Stdio   → for MCP clients (python3 docker-build-mcp-server.py)
+  HTTP    → for HTTP MCP clients (python3 docker-build-mcp-server.py --http [--port 8080])
 
-Open WebUI configuration:
-  Admin Settings → Integrations → + Add Server → Type: MCP (Streamable HTTP)
-  Server URL: http://<server>:<port>/mcp
+Streamable HTTP endpoint: http://<server>:<port>/mcp
 
 K8s config:
-  export KUBE_NAMESPACE=demo1   # default: demo1
+  export KUBE_NAMESPACE="<namespace>"
 """
 
 import argparse
@@ -28,7 +26,7 @@ from mcp.server.fastmcp import FastMCP
 
 # ── K8s config ──────────────────────────────────────────────────────────────
 
-NS = os.environ.get("KUBE_NAMESPACE", os.environ.get("DOCKER_BUILD_NAMESPACE", "demo1"))
+NS = os.environ.get("KUBE_NAMESPACE")
 POD = "docker-build"
 REGISTRY = "registry:5000"
 DOCKER_INFO_ATTEMPTS = 5
@@ -50,6 +48,8 @@ LOGGER = logging.getLogger("docker-build")
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def run_kubectl(args: list[str], timeout: int = 120) -> str:
+    if not NS:
+        raise RuntimeError("KUBE_NAMESPACE must be set")
     cmd = ["kubectl", "-n", NS] + args
     try:
         result = subprocess.run(
@@ -256,7 +256,7 @@ def create_server(**settings) -> FastMCP:
     return server
 
 
-# ── Stdio (Hermes Agent) ────────────────────────────────────────────────────
+# ── Stdio transport ────────────────────────────────────────────────────
 
 async def run_stdio():
     server = create_server()
@@ -265,7 +265,7 @@ async def run_stdio():
     await server.run_stdio_async()
 
 
-# ── HTTP (Open WebUI — Streamable HTTP, stateless mode) ────────────────────
+# ── HTTP (Streamable HTTP, stateless mode) ────────────────────
 
 async def run_http(host: str = "127.0.0.1", port: int = 8080):
     server = create_server(
@@ -289,7 +289,7 @@ async def run_http(host: str = "127.0.0.1", port: int = 8080):
 
 async def main():
     parser = argparse.ArgumentParser(description="Docker Build Factory MCP Server")
-    parser.add_argument("--http", action="store_true", help="Run HTTP mode (for Open WebUI)")
+    parser.add_argument("--http", action="store_true", help="Run in HTTP mode")
     parser.add_argument(
         "--host",
         default="127.0.0.1",

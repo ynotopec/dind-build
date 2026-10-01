@@ -6,15 +6,18 @@ Interface simple pour builder/push/pull des images Docker via un pod Kubernetes 
 
 | Outil | Action |
 |-------|--------|
-| `mcp_docker_build` | Construire une image Docker |
-| `mcp_docker_push` | Push vers la registry K8s |
-| `mcp_docker_pull` | Pull depuis la registry |
-| `mcp_docker_run` | Lancer un container |
-| `mcp_docker_list_images` | Voir les images locales |
-| `mcp_docker_list_registry` | Voir les images registry |
-| `mcp_docker_cleanup` | Nettoyer les images inutilisées |
+| `docker_build` | Construire une image Docker |
+| `docker_push` | Push vers la registry K8s |
+| `docker_pull` | Pull depuis la registry |
+| `docker_run` | Lancer un container |
+| `docker_list_images` | Voir les images locales |
+| `docker_list_registry` | Voir les images registry |
+| `docker_cleanup` | Nettoyer les images inutilisées |
 
 ## Pour utiliser les outils
+
+Le namespace n'a aucune valeur implicite : il doit être fourni au serveur avec
+la variable `KUBE_NAMESPACE`.
 
 ### 1. Installer le MCP server
 
@@ -24,14 +27,18 @@ python3 -m pip install -r requirements.txt
 
 ### 2. Configurer l'agent
 
-Ajouter dans `config.yaml` :
+Ajouter le serveur à la configuration standard du client MCP :
 
-```yaml
-mcp_servers:
-  docker-build:
-    command: python3
-    args: ["/path/to/docker-build/mcp/docker-build-mcp-server.py"]
-    timeout: 300
+```json
+{
+  "mcpServers": {
+    "docker-build": {
+      "command": "python3",
+      "args": ["/path/to/docker-build/mcp/docker-build-mcp-server.py"],
+      "env": {"KUBE_NAMESPACE": "<namespace>"}
+    }
+  }
+}
 ```
 
 ### 3. Déployer les ressources K8s
@@ -49,13 +56,13 @@ kubectl apply -f ../registry.yaml
 Les outils sont découverts automatiquement :
 
 ```
-mcp_docker_build
-mcp_docker_push
-mcp_docker_pull
-mcp_docker_run
-mcp_docker_list_images
-mcp_docker_list_registry
-mcp_docker_cleanup
+docker_build
+docker_push
+docker_pull
+docker_run
+docker_list_images
+docker_list_registry
+docker_cleanup
 ```
 
 ## Changement de session : pourquoi les outils peuvent disparaître
@@ -68,8 +75,8 @@ l'environnement du processus qui lance l'agent.
 
 Les causes les plus fréquentes sont :
 
-- la nouvelle session utilise un autre utilisateur, profil ou fichier
-  `config.yaml` ;
+- la nouvelle session utilise un autre utilisateur, profil ou fichier de
+  configuration ;
 - `command: python3` désigne un autre interpréteur, dans lequel le paquet
   `mcp` n'est pas installé ;
 - le chemin relatif du script ne fonctionne plus depuis le nouveau répertoire
@@ -92,12 +99,16 @@ python3 -c 'import sys; print(sys.executable)'
 Puis reporter ce chemin dans la configuration globale réellement lue par
 l'agent :
 
-```yaml
-mcp_servers:
-  docker-build:
-    command: /chemin/absolu/vers/python3
-    args: ["/chemin/absolu/vers/docker-build/mcp/docker-build-mcp-server.py"]
-    timeout: 300
+```json
+{
+  "mcpServers": {
+    "docker-build": {
+      "command": "/chemin/absolu/vers/python3",
+      "args": ["/chemin/absolu/vers/docker-build/mcp/docker-build-mcp-server.py"],
+      "env": {"KUBE_NAMESPACE": "<namespace>"}
+    }
+  }
+}
 ```
 
 Fermer puis recréer la session après cette modification. Pour conserver une
@@ -114,18 +125,18 @@ Exécuter les commandes suivantes **dans le même environnement que l'agent** :
 
 # 2. La session vise-t-elle le bon cluster et le bon namespace ?
 kubectl config current-context
-kubectl -n "${KUBE_NAMESPACE:-demo1}" get pod docker-build
+kubectl -n "$KUBE_NAMESPACE" get pod docker-build
 
 # 3. Le daemon Docker du pod répond-il ?
-kubectl -n "${KUBE_NAMESPACE:-demo1}" exec docker-build -- docker info
+kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker info
 
 # 4. Les images sont-elles encore dans ce pod ?
-kubectl -n "${KUBE_NAMESPACE:-demo1}" exec docker-build -- docker images
+kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker images
 ```
 
 Interprétation :
 
-- outil `mcp_docker_build` absent : problème de configuration/découverte MCP ;
+- outil `docker_build` absent : problème de configuration/découverte MCP ;
 - outil présent mais erreur `pod not found` : mauvais contexte ou namespace ;
 - pod présent mais `docker info` échoue : problème du daemon Docker ;
 - `docker info` réussit mais l'image manque : le pod a probablement été
@@ -147,7 +158,7 @@ exposer directement ce port sur un réseau non fiable.
 ### Builder une image
 
 ```
-Utiliser mcp_docker_build avec:
+Utiliser docker_build avec:
   - image_name: "mon-app:latest"
   - dockerfile_content: |
       FROM alpine:3.19
@@ -158,7 +169,7 @@ Utiliser mcp_docker_build avec:
 ### Push vers registry
 
 ```
-Utiliser mcp_docker_push avec:
+Utiliser docker_push avec:
   - image_name: "mon-app:latest"
   - registry_url: "registry:5000"  # par défaut
 ```
@@ -166,14 +177,14 @@ Utiliser mcp_docker_push avec:
 ### Pull depuis registry
 
 ```
-Utiliser mcp_docker_pull avec:
+Utiliser docker_pull avec:
   - image_name: "mon-app:latest"
 ```
 
 ### Lancer un container
 
 ```
-Utiliser mcp_docker_run avec:
+Utiliser docker_run avec:
   - image_name_with_registry: "registry:5000/mon-app:latest"
   - command: "echo 'custom command'"  # optionnel
 ```
@@ -198,7 +209,7 @@ Utiliser mcp_docker_run avec:
 | Pod non trouvé | Vérifier `kubectl get pods` dans le namespace |
 | dockerd ne démarre pas | Vérifier les logs `kubectl logs docker-build` |
 | Push échoue | Vérifier `insecure-registry` dans le pod |
-| Outils non visibles | Redémarrer l'agent après ajout dans config.yaml |
+| Outils non visibles | Redémarrer le client après modification de sa configuration |
 | Outils absents dans une nouvelle session | Vérifier le profil/configuration chargé et utiliser des chemins absolus |
 | Pod introuvable après changement de session | Comparer `kubectl config current-context` et `KUBE_NAMESPACE` |
 | Images disparues | Vérifier si le pod a été recréé ; pousser les images importantes dans la registry |

@@ -10,16 +10,22 @@ kubectl apply -f docker-build-pod.yaml
 
 ## Utilisation
 
+Définir explicitement le namespace ciblé avant d'utiliser les scripts :
+
+```bash
+export KUBE_NAMESPACE="<namespace>"
+```
+
 ### 1. Attendre que le daemon Docker soit prêt
 
 ```bash
-kubectl -n demo1 wait pod/docker-build --for=condition=ready --timeout=60s
+kubectl -n "$KUBE_NAMESPACE" wait pod/docker-build --for=condition=ready --timeout=60s
 ```
 
 ### 2. Vérifier
 
 ```bash
-kubectl -n demo1 exec docker-build -- docker info | head -5
+kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker info | head -5
 ```
 
 ### 3. Construire
@@ -34,15 +40,15 @@ kubectl -n demo1 exec docker-build -- docker info | head -5
 ### 4. Pousser vers un registry
 
 ```bash
-printf '%s' "$TOKEN" | kubectl -n demo1 exec -i docker-build -- docker login ghcr.io -u X_ACCESS_TOKEN --password-stdin
-kubectl -n demo1 exec docker-build -- docker tag mon-image:tag ghcr.io/<ORG>/mon-image:tag
-kubectl -n demo1 exec docker-build -- docker push ghcr.io/<ORG>/mon-image:tag
+printf '%s' "$TOKEN" | kubectl -n "$KUBE_NAMESPACE" exec -i docker-build -- docker login <registry> -u <username> --password-stdin
+kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker tag mon-image:tag <registry>/<organisation>/mon-image:tag
+kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker push <registry>/<organisation>/mon-image:tag
 ```
 
 ### 5. Nettoyage
 
 ```bash
-kubectl -n demo1 exec docker-build -- docker system prune -f
+kubectl -n "$KUBE_NAMESPACE" exec docker-build -- docker system prune -f
 ```
 
 ## Nettoyage

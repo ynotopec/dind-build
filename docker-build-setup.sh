@@ -2,11 +2,7 @@
 # docker-build-setup.sh — Deploy the Docker Build Factory on any K8s cluster.
 #
 # Usage:
-#   ./docker-build-setup.sh [namespace]
-#
-# Examples:
-#   ./docker-build-setup.sh                       # defaults
-#   ./docker-build-setup.sh my-namespace          # custom namespace
+#   KUBE_NAMESPACE="<namespace>" ./docker-build-setup.sh
 #
 # This deploys:
 #   1. Docker build pod (docker builder inside K8s)
@@ -16,7 +12,7 @@
 
 set -euo pipefail
 
-NS="${1:-demo1}"
+NS="${KUBE_NAMESPACE:?KUBE_NAMESPACE must be set}"
 POD="docker-build"
 REGISTRY="registry:5000"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,13 +67,17 @@ echo "  Docker build pod and K8s registry are now running."
 echo ""
 echo "  ── CLIENT (Agent) ───────────────────────────────"
 echo "  1. python3 -m pip install -r '$SCRIPT_DIR/mcp/requirements.txt'"
-echo "  2. Add to ~/.hermes/config.yaml:"
+echo "  2. Add the following entry to your MCP client configuration:"
 echo ""
-echo "    mcp_servers:"
-echo "      docker-build:"
-echo "        command: python3"
-echo "        args: ['$SCRIPT_DIR/mcp/docker-build-mcp-server.py']"
-echo "        timeout: 300"
+echo '    {'
+echo '      "mcpServers": {'
+echo '        "docker-build": {'
+echo '          "command": "python3",'
+echo "          \"args\": [\"$SCRIPT_DIR/mcp/docker-build-mcp-server.py\"],"
+echo "          \"env\": {\"KUBE_NAMESPACE\": \"$NS\"}"
+echo '        }'
+echo '      }'
+echo '    }'
 echo ""
 echo "  3. Restart the agent."
 echo ""

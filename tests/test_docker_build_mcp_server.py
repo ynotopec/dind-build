@@ -30,6 +30,12 @@ class BrandingTests(unittest.TestCase):
 
 
 class KubectlTests(unittest.TestCase):
+    @patch.object(SERVER, "NS", None)
+    def test_run_kubectl_requires_namespace(self):
+        with self.assertRaisesRegex(RuntimeError, "KUBE_NAMESPACE must be set"):
+            SERVER.run_kubectl(["get", "pods"])
+
+    @patch.object(SERVER, "NS", "test-namespace")
     @patch.object(SERVER.subprocess, "run")
     def test_run_kubectl_uses_argument_list_and_timeout(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, " ready \n", "")
@@ -45,6 +51,7 @@ class KubectlTests(unittest.TestCase):
             check=False,
         )
 
+    @patch.object(SERVER, "NS", "test-namespace")
     @patch.object(SERVER.subprocess, "run")
     def test_run_kubectl_reports_timeout(self, run):
         run.side_effect = subprocess.TimeoutExpired("kubectl", 3)
