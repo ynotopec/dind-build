@@ -6,10 +6,27 @@ from pathlib import Path
 from unittest.mock import call, patch
 
 
-MODULE_PATH = Path(__file__).parents[1] / "mcp" / "dind-mcp-server.py"
-SPEC = importlib.util.spec_from_file_location("dind_mcp_server", MODULE_PATH)
+MODULE_PATH = Path(__file__).parents[1] / "mcp" / "docker-build-mcp-server.py"
+SPEC = importlib.util.spec_from_file_location("docker_build_mcp_server", MODULE_PATH)
 SERVER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SERVER)
+
+
+class BrandingTests(unittest.TestCase):
+    def test_uses_docker_build_resource_and_tool_names(self):
+        self.assertEqual(SERVER.POD, "docker-build")
+        self.assertEqual(
+            SERVER.TOOL_NAMES,
+            [
+                "docker_build",
+                "docker_push",
+                "docker_pull",
+                "docker_run",
+                "docker_list_images",
+                "docker_list_registry",
+                "docker_cleanup",
+            ],
+        )
 
 
 class KubectlTests(unittest.TestCase):
@@ -17,11 +34,11 @@ class KubectlTests(unittest.TestCase):
     def test_run_kubectl_uses_argument_list_and_timeout(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, " ready \n", "")
 
-        result = SERVER.run_kubectl(["get", "pod", "dind-build"], timeout=9)
+        result = SERVER.run_kubectl(["get", "pod", "docker-build"], timeout=9)
 
         self.assertEqual(result, "ready")
         run.assert_called_once_with(
-            ["kubectl", "-n", SERVER.NS, "get", "pod", "dind-build"],
+            ["kubectl", "-n", SERVER.NS, "get", "pod", "docker-build"],
             capture_output=True,
             text=True,
             timeout=9,
@@ -33,7 +50,7 @@ class KubectlTests(unittest.TestCase):
         run.side_effect = subprocess.TimeoutExpired("kubectl", 3)
 
         with self.assertRaisesRegex(RuntimeError, "timed out after 3 seconds"):
-            SERVER.run_kubectl(["get", "pod", "dind-build"], timeout=3)
+            SERVER.run_kubectl(["get", "pod", "docker-build"], timeout=3)
 
 
 class ReadinessTests(unittest.TestCase):
@@ -81,10 +98,10 @@ class ImageNameTests(unittest.TestCase):
     @patch.object(SERVER, "ensure_dockerd")
     def test_all_image_tools_reject_invalid_names_before_kubectl(self, ensure_dockerd):
         invalid_calls = (
-            (SERVER._dind_build, ("../../build:latest",)),
-            (SERVER._dind_push, ("../../push:latest",)),
-            (SERVER._dind_pull, ("../../pull:latest",)),
-            (SERVER._dind_run, ("../../run:latest",)),
+            (SERVER._docker_build, ("../../build:latest",)),
+            (SERVER._docker_push, ("../../push:latest",)),
+            (SERVER._docker_pull, ("../../pull:latest",)),
+            (SERVER._docker_run, ("../../run:latest",)),
         )
 
         for tool, args in invalid_calls:
@@ -96,7 +113,7 @@ class ImageNameTests(unittest.TestCase):
 
     @patch.object(SERVER, "ensure_dockerd")
     def test_push_and_pull_reject_invalid_registry_before_kubectl(self, ensure_dockerd):
-        for tool in (SERVER._dind_push, SERVER._dind_pull):
+        for tool in (SERVER._docker_push, SERVER._docker_pull):
             with self.subTest(tool=tool.__name__):
                 with self.assertRaises(ValueError):
                     tool("team/app:v1", registry_url="bad registry")

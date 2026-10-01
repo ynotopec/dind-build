@@ -1,11 +1,11 @@
-# DinD Build — Docker-in-Docker sur Kubernetes
+# Docker Build — Docker-in-Docker sur Kubernetes
 
-Construire des images Docker depuis un cluster K8s via un pod DinD (Docker-in-Docker).
+Construire des images Docker depuis un cluster K8s via un pod Docker Build (Docker-in-Docker).
 
 ## Déploiement
 
 ```bash
-kubectl apply -f dind-pod.yaml
+kubectl apply -f docker-build-pod.yaml
 ```
 
 ## Utilisation
@@ -13,19 +13,19 @@ kubectl apply -f dind-pod.yaml
 ### 1. Attendre que le daemon Docker soit prêt
 
 ```bash
-kubectl -n demo1 wait pod/dind-build --for=condition=ready --timeout=60s
+kubectl -n demo1 wait pod/docker-build --for=condition=ready --timeout=60s
 ```
 
 ### 2. Vérifier
 
 ```bash
-kubectl -n demo1 exec dind-build -- docker info | head -5
+kubectl -n demo1 exec docker-build -- docker info | head -5
 ```
 
 ### 3. Construire
 
 ```bash
-./dind-build.sh mon-image:tag /chemin/vers/le-projet
+./docker-build.sh mon-image:tag /chemin/vers/le-projet
 ```
 
 `Dockerfile.example` est une image de test minimale ; copiez-la sous le nom
@@ -34,21 +34,21 @@ kubectl -n demo1 exec dind-build -- docker info | head -5
 ### 4. Pousser vers un registry
 
 ```bash
-printf '%s' "$TOKEN" | kubectl -n demo1 exec -i dind-build -- docker login ghcr.io -u X_ACCESS_TOKEN --password-stdin
-kubectl -n demo1 exec dind-build -- docker tag mon-image:tag ghcr.io/<ORG>/mon-image:tag
-kubectl -n demo1 exec dind-build -- docker push ghcr.io/<ORG>/mon-image:tag
+printf '%s' "$TOKEN" | kubectl -n demo1 exec -i docker-build -- docker login ghcr.io -u X_ACCESS_TOKEN --password-stdin
+kubectl -n demo1 exec docker-build -- docker tag mon-image:tag ghcr.io/<ORG>/mon-image:tag
+kubectl -n demo1 exec docker-build -- docker push ghcr.io/<ORG>/mon-image:tag
 ```
 
 ### 5. Nettoyage
 
 ```bash
-kubectl -n demo1 exec dind-build -- docker system prune -f
+kubectl -n demo1 exec docker-build -- docker system prune -f
 ```
 
 ## Nettoyage
 
 ```bash
-kubectl delete -f dind-pod.yaml
+kubectl delete -f docker-build-pod.yaml
 ```
 
 ## Important
@@ -60,4 +60,4 @@ kubectl delete -f dind-pod.yaml
   [diagnostic de session MCP](mcp/README.md#changement-de-session--pourquoi-les-outils-peuvent-disparaître).
 - Le pod a besoin d'être `privileged` et d'avoir PSA non `restricted` sur le namespace.
 - Stockage limité à 5 Go via `emptyDir.sizeLimit`.
-- Les couches Docker sont conservées entre les builds pour accélérer les builds répétés. Pour nettoyer avant un build : `DIND_PRUNE_BEFORE_BUILD=true ./dind-build.sh ...`.
+- Les couches Docker sont conservées entre les builds pour accélérer les builds répétés. Pour nettoyer avant un build : `DOCKER_BUILD_PRUNE_BEFORE_BUILD=true ./docker-build.sh ...`.

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# dind-build-setup.sh — Deploy the entire DinD Build Factory on any K8s cluster.
+# docker-build-setup.sh — Deploy the Docker Build Factory on any K8s cluster.
 #
 # Usage:
-#   ./dind-build-setup.sh [namespace]
+#   ./docker-build-setup.sh [namespace]
 #
 # Examples:
-#   ./dind-build-setup.sh                       # defaults
-#   ./dind-build-setup.sh my-namespace           # custom namespace
+#   ./docker-build-setup.sh                       # defaults
+#   ./docker-build-setup.sh my-namespace          # custom namespace
 #
 # This deploys:
-#   1. DinD pod (docker builder inside K8s)
+#   1. Docker build pod (docker builder inside K8s)
 #   2. K8s registry (local push/pull endpoint)
 #
 # Then prints the client (agent) configuration.
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 NS="${1:-demo1}"
-POD="dind-build"
+POD="docker-build"
 REGISTRY="registry:5000"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -28,7 +28,7 @@ kubectl() { command kubectl -n "$NS" "$@"; }
 command kubectl get namespace "$NS" >/dev/null 2>&1 || command kubectl create namespace "$NS"
 
 echo "═══════════════════════════════════════════════════════"
-echo "  DinD Build Factory — Setup"
+echo "  Docker Build Factory — Setup"
 echo "═══════════════════════════════════════════════════════"
 echo ""
 echo "  Namespace:  $NS"
@@ -36,10 +36,10 @@ echo "  Pod:        $POD"
 echo "  Registry:   $REGISTRY"
 echo ""
 
-# ── 1. Deploy DinD pod ──────────────────────────────────────────────────────
+# ── 1. Deploy Docker build pod ──────────────────────────────────────────────────────
 
-echo "→ Deploying DinD pod..."
-kubectl apply -f "$SCRIPT_DIR/dind-pod.yaml"
+echo "→ Deploying Docker build pod..."
+kubectl apply -f "$SCRIPT_DIR/docker-build-pod.yaml"
 
 # ── 2. Deploy K8s registry ─────────────────────────────────────────────────
 
@@ -67,21 +67,21 @@ echo "════════════════════════�
 echo "  ✓ Factory deployed!"
 echo ""
 echo "  ── SERVER (done) ──────────────────────────────────"
-echo "  DinD pod and K8s registry are now running."
+echo "  Docker build pod and K8s registry are now running."
 echo ""
 echo "  ── CLIENT (Agent) ───────────────────────────────"
 echo "  1. python3 -m pip install -r '$SCRIPT_DIR/mcp/requirements.txt'"
 echo "  2. Add to ~/.hermes/config.yaml:"
 echo ""
 echo "    mcp_servers:"
-echo "      dind-build:"
+echo "      docker-build:"
 echo "        command: python3"
-echo "        args: ['$SCRIPT_DIR/mcp/dind-mcp-server.py']"
+echo "        args: ['$SCRIPT_DIR/mcp/docker-build-mcp-server.py']"
 echo "        timeout: 300"
 echo ""
 echo "  3. Restart the agent."
 echo ""
 echo "  ── FIRST BUILD ─────────────────────────────────"
-echo "  ./dind-build.sh myapp:latest /path/to/project/"
+echo "  ./docker-build.sh myapp:latest /path/to/project/"
 echo ""
 echo "═══════════════════════════════════════════════════════"
