@@ -1,0 +1,20 @@
+docker:
+  image: docker:24-dind
+  storageSizeLimit: 5Gi
+
+registry:
+  image: registry:2.8.3
+  storageSizeLimit: 5Gi
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tls:
+    secretName: docker-build-registry-tls
+
+certManager:
+  # Name of an existing cert-manager ClusterIssuer. Leave empty when managing
+  # the Ingress certificate outside cert-manager.
+  clusterIssuer: ""

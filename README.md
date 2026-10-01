@@ -6,7 +6,7 @@ namespace implicitement.
 
 ## Démarrage minimal
 
-Prérequis d'installation **et d'exécution** : Linux, `kubectl`,
+Prérequis d'installation **et d'exécution** : Linux, `kubectl`, `helm`,
 [`uv`](https://docs.astral.sh/uv/) et un namespace Kubernetes existant auquel
 `kubectl` a accès. Le namespace doit être créé au préalable par un
 administrateur : aucun droit de création ou autre droit global au cluster
@@ -32,6 +32,25 @@ L'environnement Python est installé dans `~/venv/<nom-du-projet>`. Relancer
 `./install.sh` met à niveau une installation existante sans modifier `.env`.
 L'installation refuse de continuer tant que le namespace explicite n'est pas
 renseigné.
+
+Le déploiement Kubernetes est fourni sous forme de chart Helm dans `chart/`.
+La registry reste uniquement accessible dans le cluster par défaut. Pour
+l'exposer en HTTPS via un Ingress et cert-manager, renseigner ensemble le nom
+DNS et le `ClusterIssuer` (le contrôleur Ingress, cert-manager et le DNS doivent
+déjà être configurés) :
+
+```bash
+KUBE_NAMESPACE="<namespace>" \
+TLS_HOST="registry.example.com" \
+CERT_MANAGER_CLUSTER_ISSUER="letsencrypt-production" \
+./docker-build-setup.sh
+```
+
+Les variables d'environnement suivent la convention POSIX en majuscules. Dans
+le chart, leurs équivalents suivent la structure Helm usuelle :
+`ingress.host` et `certManager.clusterIssuer`. Le trafic interne entre le pod de
+build et `registry:5000` reste en HTTP, tandis que l'Ingress termine TLS pour
+les clients externes.
 
 Endpoint : `http://<IP>:<PORT>/mcp`
 

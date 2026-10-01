@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: docker-build
+  labels:
+    app: docker-build
+    {{- include "docker-build.labels" . | nindent 4 }}
+spec:
+  containers:
+    - name: docker
+      image: {{ .Values.docker.image | quote }}
+      args: ["--insecure-registry", "registry:5000"]
+      securityContext:
+        privileged: true
+      startupProbe:
+        exec:
+          command: ["docker", "info"]
+        periodSeconds: 1
+        failureThreshold: 60
+      readinessProbe:
+        exec:
+          command: ["docker", "info"]
+        periodSeconds: 5
+      volumeMounts:
+        - name: docker-storage
+          mountPath: /var/lib/docker
+  volumes:
+    - name: docker-storage
+      emptyDir:
+        sizeLimit: {{ .Values.docker.storageSizeLimit | quote }}
